@@ -340,7 +340,19 @@ docker run -d -p 5000:5000 --env-file .env --restart unless-stopped douyin-myste
 
 ---
 
-## 🔧 隧道方案说明
+## 💻 支持平台
+
+本项目最初在 **Android (Termux)** 上开发并运行，代码兼容主流操作系统。
+
+| 平台 | 环境配置 | 隧道支持 | 注意事项 |
+|------|---------|---------|---------|
+| **Android (Termux)** 🏠 | Python + Node.js 通过 pkg 安装 | Serveo / localhost.run | ✅ 原生支持；⚠️ Clash TUN 模式会拦截 SSH 隧道，需关掉或加直连规则 |
+| **Linux** | 系统包管理器安装 Python/Node | Serveo / localhost.run / ngrok | ✅ 全功能支持；推荐 systemd 管理进程 |
+| **Windows** | 安装 Python + Node.js（官网下载） | Serveo / localhost.run / ngrok | ✅ ngrok 可用；路径用反斜杠；PowerShell 管理后台进程 |
+| **macOS** | Homebrew 安装 Python/Node | Serveo / localhost.run / ngrok | ✅ 全功能支持 |
+| **Docker** (任意平台) | 无需手动装依赖 | 宿主机提供隧道 | ✅ 环境隔离，一键部署 |
+
+> 💡 **建议**：如果只是想临时用用，手机 Termux 就够了。如果需要 24 小时稳定运行，推荐部署到 Linux 云服务器或 Windows 电脑。
 
 内网穿透用于在外网访问本地的 Web 面板。
 
