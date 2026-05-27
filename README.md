@@ -424,6 +424,33 @@ ngrok http 5000
 |------|------|
 | 2026-05-25 | 新增 Web 面板，支持多房间监听、SSE 实时推送、自动重连、同步功能 |
 | 2026-05-27 | 代码公开托管至 Gitee，完善文档 |
+| 2026-05-28 | 新增隧道排障章节 |
+
+---
+
+## 🔧 隧道排障（Serveo）
+
+如果 Web 页面无法访问，先检查隧道：
+
+```bash
+# 检查隧道进程
+ps aux | grep serveo | grep -v grep
+
+# 测试公网
+curl -s -o /dev/null -w "%{http_code}" https://mybb.serveousercontent.com
+
+# 如果返回 502 或连不通：
+pkill -f "serveo.net"       # 杀光所有旧隧道
+sleep 5                      # 等服务端清理残留映射
+# 重新建立隧道
+nohup ssh -o StrictHostKeyChecking=no \
+  -R mybb:80:localhost:5000 serveo.net > /dev/null 2>&1 &
+```
+
+**常见问题：**
+- `remote forward failure for: listen port 80` → **旧隧道残留**，清干净重试即可（见上）
+- 502 → 隧道连上了但本地服务没起来，检查 `python3 web_listener.py` 是否在跑
+- 200 但显示空白 → 浏览器缓存，强制刷新
 
 ---
 

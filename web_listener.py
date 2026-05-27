@@ -148,9 +148,10 @@ def get_room_id_by_douyin_id(douyin_id):
 listeners = {}
 
 class RoomListener:
-    def __init__(self, room_id, nickname=''):
+    def __init__(self, room_id, nickname='', sec_uid=''):
         self.room_id = room_id
         self.nickname = nickname
+        self.sec_uid = sec_uid
         self.events = queue.Queue()
         self.running = False
         self.thread = None
@@ -174,7 +175,9 @@ class RoomListener:
         self.events.put({'type': event_type, 'data': data, 'time': time.time()})
 
     def _run(self):
-        while self.running:
+        reconnect_attempts = 0
+        max_reconnects = 5
+        while self.running and reconnect_attempts < max_reconnects:
             try:
                 user_unique_id = cu.dy_live_auth.cookie.get('uid', '7638929563125138984')
                 auth = cu.dy_live_auth
@@ -296,6 +299,7 @@ class RoomListener:
                     except: pass
 
                 def on_open(ws):
+                    reconnect_attempts = 0  # 连接成功，重置重试计数
                     self.send_event('connected', {'room_id': self.room_id, 'nickname': self.nickname})
                     def ping():
                         while self.running:
@@ -330,11 +334,13 @@ class RoomListener:
                     try:
                         info = DouyinAPI.get_live_info(cu.dy_live_auth, str(self.room_id))
                         if not info or (isinstance(info, dict) and info.get('room_status') != '2'):
-                            self.send_event('room_offline', {'room_id': self.room_id, 'mystery_count': self.mystery_count})
+                            self.send_event('room_offline', {'room_id': self.room_id, 'nickname': self.nickname, 'mystery_count': self.mystery_count})
                             self.running = False
                             break
                     except Exception:
                         pass
+
+                    reconnect_attempts += 1
                     time.sleep(5)
             except Exception as e:
                 if self.running:
