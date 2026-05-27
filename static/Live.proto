@@ -192,3 +192,37 @@ message SocialMessage {
     string shareTarget = 5;
     uint64 followCount = 6;
 }
+
+message RoomUserSeqMessageContributor {
+    uint64 score = 1;
+    User user = 2;
+    uint64 rank = 3;
+    uint64 delta = 4;
+    bool isHidden = 5;
+    string scoreDescription = 6;
+    string exactlyScore = 7;
+}
+
+message RoomUserSeqMessage {
+    int64 total = 3;
+    string popStr = 4;
+    repeated RoomUserSeqMessageContributor ranksList = 2;
+    repeated RoomUserSeqMessageContributor seatsList = 5;
+    int64 popularity = 6;
+    int64 totalUser = 7;
+    string totalUserStr = 8;
+    string totalStr = 9;
+    string onlineUserForAnchor = 10;
+    string totalPvForAnchor = 11;
+}
+
+// RoomRankMessage - 房间排行榜（可能包含更多用户）
+message RoomRankMessage {
+    repeated RoomRank ranksList = 2;
+
+    message RoomRank {
+        User user = 1;
+        string scoreStr = 2;
+        bool profileHidden = 3;
+    }
+}

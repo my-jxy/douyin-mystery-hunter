@@ -20,16 +20,11 @@ if getattr(sys, 'frozen', None):
     basedir = sys._MEIPASS
 else:
     basedir = path.dirname(__file__)
+rootdir = path.dirname(basedir)
 
 
-try:
-    node_modules = path.join(basedir, 'static', 'node_modules')
-    login_path = path.join(basedir, 'static', 'login.js')
-    login_js = execjs.compile(open(login_path, 'r', encoding='utf-8').read(), cwd=node_modules)
-except:
-    node_modules = path.join(basedir, '..', 'static', 'node_modules')
-    login_path = path.join(basedir, '..', 'static', 'login.js')
-    login_js = execjs.compile(open(login_path, 'r', encoding='utf-8').read(), cwd=node_modules)
+login_path = path.join(rootdir, 'static', 'login.js')
+login_js = execjs.compile(open(login_path, 'r', encoding='utf-8').read(), cwd=rootdir)
 
 
 def generateSecretPhoneNum(phone):
@@ -39,18 +34,10 @@ def generateSecretCode(phone, code):
     sign = login_js.call('generateSecretCode', phone, code)
     return sign
 
-try:
-    node_modules = path.join(basedir, 'node_modules')
-    dy_path = path.join(basedir, 'static', 'dy_ab.js')
-    dy_js = execjs.compile(open(dy_path, 'r', encoding='utf-8').read(), cwd=node_modules)
-    sign_path = path.join(basedir, 'static', 'dy_live_sign.js')
-    sign_js = execjs.compile(open(sign_path, 'r', encoding='utf-8').read(), cwd=node_modules)
-except:
-    node_modules = path.join(basedir, '..', 'node_modules')
-    dy_path = path.join(basedir, '..', 'static', 'dy_ab.js')
-    dy_js = execjs.compile(open(dy_path, 'r', encoding='utf-8').read(), cwd=node_modules)
-    sign_path = path.join(basedir, '..', 'static', 'dy_live_sign.js')
-    sign_js = execjs.compile(open(sign_path, 'r', encoding='utf-8').read(), cwd=node_modules)
+dy_path = path.join(rootdir, 'static', 'dy_ab.js')
+dy_js = execjs.compile(open(dy_path, 'r', encoding='utf-8').read(), cwd=rootdir)
+sign_path = path.join(rootdir, 'static', 'dy_live_sign.js')
+sign_js = execjs.compile(open(sign_path, 'r', encoding='utf-8').read(), cwd=rootdir)
 
 
 def trans_cookies(cookies_str):
