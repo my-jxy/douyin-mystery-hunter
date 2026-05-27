@@ -88,9 +88,12 @@ Queue（事件队列）
 ### 安装
 
 ```bash
-# 克隆仓库
-git clone https://gitee.com/my-jy/douyin-spider.git
-cd douyin-spider
+# 克隆仓库（GitHub 优先）
+git clone https://github.com/my-jxy/douyin-mystery-hunter.git
+cd douyin-mystery-hunter
+# 或从 Gitee 镜像克隆
+# git clone https://gitee.com/my-jy/douyin-spider.git
+# cd douyin-spider
 
 # 安装 Python 依赖
 pip install -r requirements.txt
@@ -423,7 +426,7 @@ ngrok http 5000
 | 日期 | 内容 |
 |------|------|
 | 2026-05-25 | 新增 Web 面板，支持多房间监听、SSE 实时推送、自动重连、同步功能 |
-| 2026-05-27 | 代码公开托管至 Gitee，完善文档 |
+| 2026-05-27 | 代码公开托管至 Gitee + GitHub，完善文档 |
 | 2026-05-28 | 新增隧道排障章节 |
 
 ---
