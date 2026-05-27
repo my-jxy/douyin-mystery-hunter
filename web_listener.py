@@ -11,6 +11,7 @@ cu.load_env()
 from builder.params import Params
 from builder.header import HeaderBuilder
 from utils.dy_util import generate_signature
+from dy_apis.douyin_api import DouyinAPI
 from urllib.parse import urlencode
 from websocket import WebSocketApp
 import static.Live_pb2 as Live_pb2
@@ -325,6 +326,15 @@ class RoomListener:
                 self.ws.run_forever(origin='https://live.douyin.com')
 
                 if self.running:
+                    # 检查直播间是否还在播，防止下播后无限重连
+                    try:
+                        info = DouyinAPI.get_live_info(cu.dy_live_auth, str(self.room_id))
+                        if not info or (isinstance(info, dict) and info.get('room_status') != '2'):
+                            self.send_event('room_offline', {'room_id': self.room_id, 'mystery_count': self.mystery_count})
+                            self.running = False
+                            break
+                    except Exception:
+                        pass
                     time.sleep(5)
             except Exception as e:
                 if self.running:
