@@ -30,7 +30,7 @@
 - **真实身份查询** — 通过抖音 API 查询神秘人的真实昵称、抖音号、粉丝数、IP 属地
 - **多房间监听** — 同时监听 **最多 3 个** 不同直播间，每个房间独立连接
 - **多种输入格式** — 支持抖音号、主页链接、直播间链接三种方式输入
-- **实时 Web 面板** — 手机浏览器即可访问，零 AI Token 消耗
+- **实时 Web 面板** — 手机浏览器即可访问，无需消耗 AI token
 - **弹幕/礼物记录** — 神秘人发送的弹幕和赠送的礼物自动记录、折叠展示
 
 ### 🔧 进阶功能
@@ -49,9 +49,9 @@
 ```
 用户浏览器（手机/电脑）
     ↓ HTTPS
-SSH 隧道（Serveo.net / localhost.run）
+SSH 隧道（Serveo.net）
     ↓
-Flask Web 服务（手机 Termux / 云服务器，端口 5000）
+Flask Web 服务（手机 Termux 或云服务器，端口 5000）
     ├─ GET  /                → 前端页面（暗色主题）
     ├─ POST /api/resolve     → 解析抖音号/链接 → {room_id, nickname}
     ├─ POST /api/start       → 启动 WebSocket 监听
@@ -89,7 +89,7 @@ Queue（事件队列）
 
 ```bash
 # 克隆仓库
-git clone git@gitee.com:my-jy/douyin-spider.git
+git clone https://gitee.com/my-jy/douyin-spider.git
 cd douyin-spider
 
 # 安装 Python 依赖
@@ -170,7 +170,7 @@ https://www.douyin.com/user/MS4wLjABAAAA...
 - 最多同时监听 **3 个** 直播间
 - 每个房间独立 WebSocket 连接，互不影响
 - 神秘人卡片左上角带颜色标签区分房间来源
-- 颜色分配：红 `#fe2c55` → 蓝 `#5ac8fa` → 绿 `#34c759`
+- 颜色分配：红 → 蓝 → 绿，按加入顺序循环
 - 重复输入已监听的房间会提示"⚠️ 已在监听"
 
 ### 方式二：命令行模式
@@ -280,9 +280,9 @@ WebSocket 消息流
 
 ### API 防风控
 
-- **限流**：API 调用间隔 ≥ 0.3 秒
+- **限流**：API 调用间隔 ≥ 0.3 秒，防止触发抖音风控
 - **缓存**：同一用户只查一次，失败的也缓存
-- **轻量认证**：仅用 ttwid + 空 msToken，不加 a_bogus
+- **轻量认证**：仅用 ttwid + 空 msToken，不加 a_bogus 签名
 
 ---
 
@@ -333,77 +333,74 @@ WebSocket 消息流
 
 ## 🐳 Docker 部署
 
-### 构建镜像
-
 ```bash
 docker build -t douyin-mystery-hunter .
-```
-
-### 运行容器
-
-```bash
-docker run -d \
-  -p 5000:5000 \
-  --env-file .env \
-  --restart unless-stopped \
-  douyin-mystery-hunter
-```
-
-### Dockerfile 说明
-
-基于 `python:3.10-slim`，自动安装 Node.js 20，暴露 5000 端口。
-
----
-
-## ☁️ 云服务器部署
-
-### 推荐配置
-
-| 平台 | 最低配置 | 月费 |
-|------|---------|------|
-| 阿里云轻量 | 1核1G/20G SSD/1M | ~¥9/月 |
-| 腾讯云轻量 | 1核1G/50G SSD/1M | ~¥10/月 |
-| Railway | 容器托管 | 免费$5额度/月 |
-
-### 部署步骤
-
-```bash
-# 1. 安装依赖
-apt update && apt install -y python3 python3-pip nodejs git
-pip install -r requirements.txt
-npm install
-
-# 2. 克隆代码
-git clone git@gitee.com:my-jy/douyin-spider.git
-cd douyin-spider
-
-# 3. 配置 .env（上传或手动创建）
-nano .env
-
-# 4. 启动
-python3 web_listener.py
+docker run -d -p 5000:5000 --env-file .env --restart unless-stopped douyin-mystery-hunter
 ```
 
 ---
 
-## 🔧 隧道方案对比
+## 🔧 隧道方案说明
 
-| 方案 | 优点 | 缺点 | 推荐度 |
-|------|------|------|--------|
-| **Serveo.net** 🔥 | 支持固定子域名，稳定 | 需要 SSH，有时被 Clash 拦截 | ⭐⭐⭐⭐⭐ |
-| **localhost.run** | 免注册，零配置 | 每次重启域名变化 | ⭐⭐⭐⭐ |
-| **Cloudflare Tunnel** | 固定域名，走 HTTPS | 需要装 cloudflared | ⭐⭐⭐⭐ |
+内网穿透用于在外网访问本地的 Web 面板。
+
+### Serveo.net（推荐）
+
+```bash
+ssh -o StrictHostKeyChecking=no -R mybb:80:localhost:5000 serveo.net
+```
+
+支持固定子域名，访问 `https://mybb.serveousercontent.com` 即可。稳定可靠，推荐使用。
+
+### localhost.run（备选）
+
+```bash
+ssh -o StrictHostKeyChecking=no -R 80:localhost:5000 nokey@localhost.run
+```
+
+免注册零配置，但每次重启域名会变化。
+
+### ngrok
+
+如果你在 Windows/Linux/Mac 上运行，也可以用 ngrok 做内网穿透：
+
+```bash
+ngrok http 5000
+```
+
+> ⚠️ ngrok 官方 Python 包（pyngrok）不支持 Android 系统，因此 Termux 上无法使用。Windows/Linux/Mac 上完全正常。
+
+---
+
+## ☁️ 推荐：部署到云服务器
+
+手机本地运行依赖 Termux 进程不中断，网络也受限制。建议有条件的话部署到云服务器上，24 小时在线，不受手机影响。
+
+### 推荐云平台
+
+| 平台 | 说明 |
+|------|------|
+| **阿里云轻量** | 新用户 1 个月免费，后续约 ¥9/月起 |
+| **腾讯云轻量** | 新用户 1 个月免费，后续约 ¥10/月起 |
+| **Railway** | 海外平台，免费 $5 额度/月，但注册需信用卡 |
+
+> 国内平台（阿里云/腾讯云）支持支付宝付款，无需信用卡。
+
+### 部署要点
+
+- 云服务器上只需装 Python + Node.js + Git
+- `git clone` 项目，装依赖，配 `.env`，跑起来就行
+- 自带公网 IP，无需额外配置隧道
 
 ---
 
 ## ⚠️ 已知限制
 
-1. **最多同时监听 3 个直播间** — 后端硬限制
-2. **Cookie 有效期** — 抖音 cookie 会过期，需重新获取
-3. **榜一/排行榜不显示** — Web 面板过滤了排行榜消息（用户要求去掉刷屏）
-4. **匿名模式下财富等级为 0** — 抖音隐藏，非 bug
-5. **pyngrok 不支持 Android** — Termux 无法使用 ngrok
-6. **API 风控** — 连续大量查询可能触发抖音风控（限流 + 缓存已缓解）
+1. **最多同时监听 3 个直播间**
+2. **Cookie 会过期** — 需定期重新获取
+3. **榜一/排行榜不显示** — Web 面板过滤了排行榜消息
+4. **匿名模式下财富等级始终为 0** — 抖音隐藏，非 bug
+5. **API 有风控** — 连续大量查询会被限制（限流 + 缓存已缓解）
 
 ---
 
@@ -411,13 +408,11 @@ python3 web_listener.py
 
 | 日期 | 内容 |
 |------|------|
-| 2026-05-25 | Web 面板上线，支持多房间监听、SSE 实时推送、自动重连、同步功能 |
-| 2026-05-27 | 代码托管至 Gitee，完善文档 |
+| 2026-05-25 | 新增 Web 面板，支持多房间监听、SSE 实时推送、自动重连、同步功能 |
+| 2026-05-27 | 代码公开托管至 Gitee，完善文档 |
 
 ---
 
 ## 📄 许可
 
-本项目基于 [Douyin_Spider](https://github.com/cvv-cat/Douyin_Spider) 二次开发，专注神秘人识别场景。
-
-仅供学习与技术研究使用。
+基于 [Douyin_Spider](https://github.com/cvv-cat/Douyin_Spider) 二次开发，专注神秘人识别场景。仅供学习与技术研究使用。
