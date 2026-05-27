@@ -360,14 +360,23 @@ def start_listen():
         return jsonify({'success': True, 'room_id': room_id, 'already': True})
 
     # 检查数量限制
+    # 🔧 同时监听上限，修改下面 `3` 即可调整
+    # 性能说明：
+    #   - 每个直播间 = 一个 Python 线程 + 一个 WebSocket 连接
+    #   - 内存消耗：约 20-30MB / 每直播间
+    #   - CPU 占用：几乎为零（空闲状态），消息多时约 1-5%
+    #   - 网络：每个房间一个 WebSocket 长连接，流量极小
+    #   - 主要瓶颈在抖音 API 限流（查询神秘人身份），与房间数量无关
+    #   - 推荐上限：普通手机 5-8 个，云服务器/电脑 10-20 个
+    MAX_ROOMS = 3  # ← 改这个数字即可调整上限
     running_count = sum(1 for l in listeners.values() if l.running)
-    if running_count >= 3:
-        return jsonify({'success': False, 'error': '最多同时监听3个直播间，请先停止一个再试'})
+    if running_count >= MAX_ROOMS:
+        return jsonify({'success': False, 'error': f'最多同时监听{MAX_ROOMS}个直播间，请先停止一个再试'})
 
     listener = RoomListener(room_id, nickname)
     listeners[room_id] = listener
     listener.start()
-    return jsonify({'success': True, 'room_id': room_id, 'active': running_count + 1, 'max': 3})
+    return jsonify({'success': True, 'room_id': room_id, 'active': running_count + 1, 'max': MAX_ROOMS})
 
 @app.route('/api/stop', methods=['POST'])
 def stop_listen():
