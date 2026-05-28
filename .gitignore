@@ -3,6 +3,7 @@ node_modules/
 *.so
 .Python
 build/
+.env
 develop-eggs/
 dist/
 downloads/

@@ -1,4 +1,3 @@
-asyncio
 aiofiles
 loguru
 python-dotenv
@@ -7,5 +6,12 @@ openpyxl
 urllib3
 PyExecJS
 requests
-argparse
 websockets
+websocket-client
+beautifulsoup4
+Flask
+protobuf
+protobuf-to-dict
+qrcode
+Pillow
+aiohttp
