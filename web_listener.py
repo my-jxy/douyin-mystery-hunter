@@ -134,10 +134,29 @@ def get_room_id_by_douyin_id(douyin_id):
             url = resp.url
             rid = re.search(r'/(\d+)\??', url)
             if rid: return {'success': True, 'room_id': rid.group(1), 'type': 'live'}
-            # 可能是用户主页
-            sec = re.search(r'sec_user_id=([^&]+)', url)
+            # 可能是用户主页 → 提取 sec_uid 查直播状态
+            sec = re.search(r'sec_uid=([^&]+)', url)
             if sec:
-                return {'success': True, 'sec_uid': sec.group(1), 'type': 'user'}
+                sec_uid = sec.group(1)
+                try:
+                    _auth_cookies = dict(cu.dy_live_auth.cookie)
+                    resp2 = requests.get(
+                        'https://www.douyin.com/aweme/v1/web/user/profile/other/',
+                        params={'device_platform': 'webapp', 'aid': '6383',
+                                'sec_user_id': sec_uid, 'version_code': '170400', 'msToken': ''},
+                        headers={'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36',
+                                 'Referer': f'https://www.douyin.com/user/{sec_uid}'},
+                        cookies={'ttwid': _TTWID}, verify=False, timeout=10)
+                    j2 = resp2.json()
+                    if j2.get('status_code') == 0 and 'user' in j2:
+                        u = j2['user']
+                        return {'success': True, 'nickname': u.get('nickname', ''),
+                                'room_id': str(u.get('room_id', 0)),
+                                'live_status': u.get('live_status', 0),
+                                'sec_uid': sec_uid}
+                except: pass
+                return {'success': True, 'sec_uid': sec_uid, 'live_status': 0,
+                        'room_id': '0', 'nickname': ''}
         except: pass
     # 直接是数字→当做room_id
     if douyin_id.isdigit():
