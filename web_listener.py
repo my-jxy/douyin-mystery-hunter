@@ -133,7 +133,7 @@ def get_room_id_by_douyin_id(douyin_id):
                 headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
             url = resp.url
             rid = re.search(r'/(\d+)\??', url)
-            if rid: return {'success': True, 'room_id': rid.group(1), 'type': 'live'}
+            if rid: return {'success': True, 'room_id': rid.group(1), 'type': 'live', 'live_status': 1}
             # 可能是用户主页 → 提取 sec_uid 查直播状态
             sec = re.search(r'sec_uid=([^&]+)', url)
             if sec:
@@ -613,7 +613,7 @@ function connect() {
       btn.disabled = false; btn.textContent = '🔍 监听'
       return
     }
-    if (data.room_id && data.live_status == 1) {
+    if (data.room_id && (data.live_status == 1 || data.live_status === undefined)) {
       if (currentRooms[data.room_id]) {
         showToast('⚠️ 已在监听该直播间')
         btn.disabled = false; btn.textContent = '🔍 监听'
