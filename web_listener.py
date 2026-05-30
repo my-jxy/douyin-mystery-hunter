@@ -354,7 +354,7 @@ class RoomListener:
                     # 检查直播间是否还在播，防止下播后无限重连
                     try:
                         info = DouyinAPI.get_live_info(cu.dy_live_auth, str(self.room_id))
-                        if not info or (isinstance(info, dict) and info.get('room_status') != '2'):
+                        if not info or not isinstance(info, dict) or info.get('room_status') != '2':
                             self.send_event('room_offline', {'room_id': self.room_id, 'nickname': self.nickname, 'mystery_count': self.mystery_count})
                             self.running = False
                             break
