@@ -92,8 +92,8 @@ Queue（事件队列）
 git clone https://github.com/my-jxy/douyin-mystery-hunter.git
 cd douyin-mystery-hunter
 # 或从 Gitee 镜像克隆
-# git clone https://gitee.com/my-jy/douyin-spider.git
-# cd douyin-spider
+# git clone https://gitee.com/my-jy/douyin-mystery-hunter.git
+# cd douyin-mystery-hunter
 
 # 安装 Python 依赖
 pip install -r requirements.txt
