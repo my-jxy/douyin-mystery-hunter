@@ -181,6 +181,22 @@ class RoomListener:
             try:
                 user_unique_id = cu.dy_live_auth.cookie.get('uid', '7638929563125138984')
                 auth = cu.dy_live_auth
+
+                # ====== 先调 get_webcast_detail 拿真实 cursor + internalExt ======
+                try:
+                    _ws_init = DouyinAPI.get_webcast_detail(
+                        auth, str(user_unique_id), self.room_id,
+                        f"https://live.douyin.com/{self.room_id}"
+                    )
+                    _init_frame = Live_pb2.LiveResponse()
+                    _init_frame.ParseFromString(_ws_init)
+                    _cursor = str(_init_frame.cursor)
+                    _internal_ext = _init_frame.internalExt
+                except Exception as e:
+                    print(f"[WARN] get_webcast_detail failed: {e}, using defaults")
+                    _cursor = '-1'
+                    _internal_ext = ''
+
                 sig = generate_signature(self.room_id, user_unique_id)
 
                 params = Params()
@@ -192,7 +208,7 @@ class RoomListener:
                  .add_param('browser_platform','Win32').add_param('browser_name','Mozilla')
                  .add_param('browser_version',HeaderBuilder.ua.split('Mozilla/')[-1])
                  .add_param('browser_online','true').add_param('tz_name','Etc/GMT-8')
-                 .add_param('cursor','-1').add_param('host','https://live.douyin.com')
+                 .add_param('cursor', _cursor).add_param('host','https://live.douyin.com')
                  .add_param('aid','6383').add_param('live_id','1').add_param('did_rule','3')
                  .add_param('endpoint','live_pc').add_param('support_wrds','1')
                  .add_param('user_unique_id',user_unique_id).add_param('im_path','/webcast/im/fetch/')
@@ -200,6 +216,8 @@ class RoomListener:
                  .add_param('insert_task_id','').add_param('live_reason','')
                  .add_param('room_id',self.room_id).add_param('heartbeatDuration','0')
                  .add_param('signature',sig))
+                if _internal_ext:
+                    params.add_param('internal_ext', _internal_ext)
 
                 wss_url = f"wss://webcast100-ws-web-hl.douyin.com/webcast/im/push/v2/?{urlencode(params.get())}"
 
@@ -266,26 +284,29 @@ class RoomListener:
                                     self.send_event('mystery_chat', chat_info)
 
                             elif item.method == 'WebcastGiftMessage':
-                                msg = Live_pb2.GiftMessage()
-                                msg.ParseFromString(item.payload)
-                                user = msg.user
-                                is_mystery, display, real_name, mm = is_real_mystery_user(user)
-                                if is_mystery:
-                                    gift_info = {
-                                        'display': display, 'real_name': real_name,
-                                        'sec_uid': user.sec_uid, 'gift_name': msg.gift.name,
-                                        'count': msg.comboCount,
-                                        'badge_level': get_badge_level(user),
-                                        'consume_level': user.consume_diamond_level,
-                                        'unique_id': user_id_str(user)}
-                                    extra = lookup_user(user.sec_uid)
-                                    if extra:
-                                        if extra.get('nickname') and extra['nickname'] != real_name:
-                                            gift_info['real_name'] = extra['nickname']
-                                        gift_info['extra'] = extra
-                                    gift_info['room_id'] = self.room_id
-                                    gift_info['room_nickname'] = self.nickname
-                                    self.send_event('mystery_gift', gift_info)
+                                try:
+                                    msg = Live_pb2.GiftMessage()
+                                    msg.ParseFromString(item.payload)
+                                    user = msg.user
+                                    is_mystery, display, real_name, mm = is_real_mystery_user(user)
+                                    if is_mystery:
+                                        gift_info = {
+                                            'display': display, 'real_name': real_name,
+                                            'sec_uid': user.sec_uid, 'gift_name': msg.gift.name if msg.gift else '?',
+                                            'count': msg.comboCount,
+                                            'badge_level': get_badge_level(user),
+                                            'consume_level': user.consume_diamond_level,
+                                            'unique_id': user_id_str(user)}
+                                        extra = lookup_user(user.sec_uid)
+                                        if extra:
+                                            if extra.get('nickname') and extra['nickname'] != real_name:
+                                                gift_info['real_name'] = extra['nickname']
+                                            gift_info['extra'] = extra
+                                        gift_info['room_id'] = self.room_id
+                                        gift_info['room_nickname'] = self.nickname
+                                        self.send_event('mystery_gift', gift_info)
+                                except Exception:
+                                    pass
 
                             elif item.method == 'WebcastRoomStatsMessage':
                                 pass  # 忽略在线/累计，不刷屏
@@ -750,6 +771,12 @@ function handleEvent(event, roomId) {
       }
       mysteries[d.sec_uid].gifts.push({name: d.gift_name, count: d.count, time: Date.now()})
       renderMysteries()
+      break
+    case 'room_offline':
+      setStatus('已断开', 'red')
+      // 直播间已下播，自动停止监听
+      showToast('📴 直播已结束，已自动停止')
+      stopRoom(roomId)
       break
     case 'error':
       break
