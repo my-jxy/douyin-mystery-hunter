@@ -96,8 +96,8 @@ def is_real_mystery_user(user):
 
 def get_room_id_by_douyin_id(douyin_id):
     """通过抖音号/链接获取 room_id"""
-    # 纯数字抖音号 → 用旧版v2 API查
-    if douyin_id.isdigit():
+    # 抖音号（纯数字或字母数字组合）→ 用旧版v2 API查
+    if re.match(r'^[a-zA-Z0-9_]+$', douyin_id) and not douyin_id.startswith('http'):
         try:
             _auth_cookies = dict(cu.dy_live_auth.cookie)
             resp = requests.get('https://www.douyin.com/web/api/v2/user/info/',
@@ -159,7 +159,7 @@ def get_room_id_by_douyin_id(douyin_id):
                         'room_id': '0', 'nickname': ''}
         except: pass
     # 直接是数字→当做room_id
-    if douyin_id.isdigit():
+    if re.match(r'^[a-zA-Z0-9_]+$', douyin_id) and not douyin_id.startswith('http'):
         return {'success': True, 'room_id': douyin_id, 'type': 'room'}
     return {'success': False, 'error': '无法解析链接或抖音号'}
 
