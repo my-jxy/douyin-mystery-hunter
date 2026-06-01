@@ -627,7 +627,8 @@ INDEX_HTML = """<!DOCTYPE html>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f0f0f;color:#e0e0e0;min-height:100vh;padding:16px}
 .container{max-width:600px;margin:0 auto}
-h1{font-size:22px;text-align:center;padding:12px 0 8px;background:linear-gradient(135deg,#fe2c55,#ff6b35);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-weight:700}
+h1{font-size:26px;text-align:center;padding:12px 0 8px;background:linear-gradient(135deg,#fe2c55,#ff6b35,#fe2c55,#ff6b35,#fe2c55);background-size:300% 100%;-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;font-weight:700;animation:titleShimmer 4s ease-in-out infinite}
+@keyframes titleShimmer{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
 .input-group{display:flex;gap:8px;margin:12px 0}
 .input-group input{flex:1;padding:12px 14px;border:1px solid #333;border-radius:10px;background:#1a1a1a;color:#e0e0e0;font-size:15px;outline:none;transition:border .2s}
 .input-group input:focus{border-color:#fe2c55}
@@ -692,9 +693,10 @@ h1{font-size:22px;text-align:center;padding:12px 0 8px;background:linear-gradien
 .events:empty,.events:has(.empty){display:block}
 .events::-webkit-scrollbar{width:4px}
 .events::-webkit-scrollbar-thumb{background:#333;border-radius:2px}
-.event{padding:7px 9px;border-radius:8px;font-size:12px;line-height:1.4;animation:fadeIn .3s ease;overflow:hidden;height:108px;min-height:108px}
+.event{padding:7px 9px;border-radius:8px;font-size:12px;line-height:1.4;overflow:hidden;height:108px;min-height:108px}
 .event.exp{height:auto;min-height:108px}
 </style>
+  <script src="/static/anime.min.js"></script>
 </head>
 <body>
 <div class="container">
@@ -1375,6 +1377,94 @@ function stopAll() {
     })
     .catch(() => {})
 })()
+
+/* ═══ Anime.js 动画增强 ═══ */
+const { animate, stagger, spring } = anime;
+
+/* ---- 状态圆点呼吸 ---- */
+(function dotPulse(){
+  const dot = document.getElementById('dot');
+  let anim = null;
+  const obs = new MutationObserver(() => {
+    if(anim) { anim.pause(); anim = null; }
+    if(dot.classList.contains('green')){
+      anim = animate(dot, {
+        boxShadow: ['0 0 0 0 rgba(52,199,89,0)', '0 0 0 6px rgba(52,199,89,0.3)'],
+        duration: 1500,
+        loop: true,
+        ease: 'inOutSine',
+      });
+    } else if(dot.classList.contains('red')){
+      anim = animate(dot, {
+        boxShadow: ['0 0 0 0 rgba(255,59,48,0)', '0 0 0 5px rgba(255,59,48,0.2)'],
+        duration: 1200,
+        loop: true,
+        ease: 'inOutSine',
+      });
+    } else {
+      dot.style.boxShadow = 'none';
+    }
+  });
+  obs.observe(dot, { attributes: true, attributeFilter: ['class'] });
+})();
+
+/* ---- 按钮监听光晕 ---- */
+(function btnGlow(){
+  const btn = document.getElementById('btn');
+  let glow = null;
+  const obs = new MutationObserver(() => {
+    if(glow) { glow.pause(); glow = null; }
+    if(btn.classList.contains('stop-btn')){
+      btn.style.transition = 'box-shadow .3s';
+      glow = animate(btn, {
+        boxShadow: ['0 0 0 0 rgba(255,107,53,0)', '0 0 12px 3px rgba(255,107,53,0.25)'],
+        duration: 2000,
+        loop: true,
+        ease: 'inOutSine',
+      });
+    } else {
+      btn.style.boxShadow = 'none';
+    }
+  });
+  obs.observe(btn, { attributes: true, attributeFilter: ['class'] });
+})();
+
+/* ---- Hook renderMysteries 添加卡片动画 ---- */
+const origRender = renderMysteries;
+renderMysteries = function(){
+  origRender();
+  const cards = document.querySelectorAll('.events > .event');
+  cards.forEach(c => { c.style.opacity = '0'; c.style.transform = 'translateY(8px)'; });
+  animate(cards, {
+    opacity: [0,1],
+    translateY: [8,0],
+    duration: 400,
+    delay: stagger(60),
+    ease: 'outCubic',
+  });
+};
+
+/* ---- Hook renderAllCards 添加卡片动画 ---- */
+const origRenderAll = renderAllCards;
+renderAllCards = function(users, container, roomColors, roomMap){
+  origRenderAll(users, container, roomColors, roomMap);
+  const cards = document.querySelectorAll('.events > .event');
+  cards.forEach(c => { c.style.opacity = '0'; c.style.transform = 'translateY(8px)'; });
+  animate(cards, {
+    opacity: [0,1],
+    translateY: [8,0],
+    duration: 400,
+    delay: stagger(60),
+    ease: 'outCubic',
+  });
+};
+
+/* ---- 模式切换卡片动画 ---- */
+const origSwitch = switchMode;
+switchMode = function(mode){
+  origSwitch(mode);
+  // 切换后卡片已有新内容，动画在 render 函数里已触发
+};
 </script>
 </body>
 </html>"""
