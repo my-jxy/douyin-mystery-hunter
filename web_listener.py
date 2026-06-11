@@ -27,6 +27,7 @@ _user_info_cache = {}
 _level_cache = {}
 _last_api_call = 0  # 限流时间戳
 _record_all_enabled = False  # 全局录制开关：True=记录所有用户，False=仅记录神秘人
+_private_name_cache = {}  # (room_id:display) -> real_nickname, 私密直播间送礼拿到真实名后缓存
 
 def gender_str(g):
     return GENDER_MAP.get(g, '未知')
@@ -180,6 +181,7 @@ class RoomListener:
         self.recent_mysteries = []
         self.all_users_path = None
         self._mystery_seq = 0
+        self.last_msg_time = time.time()  # 最后收到消息的时间，用于下播检测
 
     def start(self):
         self.running = True
@@ -207,6 +209,11 @@ class RoomListener:
             return
         data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
         os.makedirs(data_dir, exist_ok=True)
+        # 清除该房间的旧文件
+        for f in os.listdir(data_dir):
+            if f.endswith('.jsonl') and f.startswith(f'{self.room_id}_'):
+                try: os.remove(os.path.join(data_dir, f))
+                except: pass
         ts = time.strftime('%Y%m%d_%H%M%S')
         self.all_users_path = os.path.join(data_dir, f'{self.room_id}_{ts}.jsonl')
 
@@ -282,14 +289,24 @@ class RoomListener:
                             ws.send(s.SerializeToString(), opcode=0x02)
 
                         for item in response.messagesList:
+                            self.last_msg_time = time.time()
                             if item.method == 'WebcastMemberMessage':
                                 msg = Live_pb2.MemberMessage()
                                 msg.ParseFromString(item.payload)
                                 user = msg.user
                                 is_mystery, display, real_name, mm = is_real_mystery_user(user)
+                                # 私密直播间：先查缓存（不管是不是神秘人，只要sec_uid为空就查）
+                                extra = None
+                                if not user.sec_uid:
+                                    cached = _private_name_cache.get(f"{self.room_id}:{display}")
+                                    if cached:
+                                        print(f"[CACHE] 缓存命中: {display} -> {cached.get('nickname','?')}", flush=True)
+                                        extra = cached
+                                    else:
+                                        print(f"[CACHE] 缓存未命中(enter): {self.room_id}:{display}", flush=True)
                                 if is_mystery:
-                                    # API确认：查到真实昵称且和脱敏名一样 → 普通用户改的名
-                                    extra = lookup_user(user.sec_uid)
+                                    if not extra:
+                                        extra = lookup_user(user.sec_uid)
                                     if extra and extra.get('nickname') and extra['nickname'] == display:
                                         is_mystery = False
                                 if is_mystery:
@@ -311,13 +328,24 @@ class RoomListener:
                                     info['room_id'] = self.room_id
                                     info['room_nickname'] = self.nickname
                                     self.send_event('mystery_enter', info)
+                                    # 全部页：私密直播间用户（sec_uid为空）也写入磁盘记录
+                                    if _record_all_enabled and not info.get('sec_uid'):
+                                        rec = info.copy()
+                                        rec['event_type'] = 'enter'
+                                        print(f"[JSONL] 写入: real_name={rec.get('real_name','?')} sec_uid={rec.get('sec_uid','')} has_extra={bool(rec.get('extra'))}", flush=True)
+                                        self._write_all_user(rec)
                                 elif _record_all_enabled:
-                                    info = {'display': display, 'real_name': real_name,
+                                    # 私密直播间：用缓存补全真实名
+                                    if extra and extra.get('nickname'):
+                                        real_name = extra['nickname']
+                                    info = {'display': display, 'real_name': real_name,    
                                             'unique_id': user_id_str(user), 'sec_uid': user.sec_uid,
                                             'gender': gender_str(user.gender),
                                             'consume_level': user.consume_diamond_level,
                                             'badge_level': get_badge_level(user), 'mystery_man': mm,
                                             'is_regular': True, 'event_type': 'enter'}
+                                    if extra:
+                                        info['extra'] = extra
                                     info['room_id'] = self.room_id
                                     info['room_nickname'] = self.nickname
                                     self._write_all_user(info)
@@ -327,8 +355,18 @@ class RoomListener:
                                 msg.ParseFromString(item.payload)
                                 user = msg.user
                                 is_mystery, display, real_name, mm = is_real_mystery_user(user)
+                                # 私密直播间：先查缓存
+                                extra = None
+                                if not user.sec_uid:
+                                    cached = _private_name_cache.get(f"{self.room_id}:{display}")
+                                    if cached:
+                                        print(f"[CACHE] 缓存命中(chat): {display} -> {cached.get('nickname','?')}", flush=True)
+                                        extra = cached
+                                    else:
+                                        print(f"[CACHE] 缓存未命中(chat): {self.room_id}:{display}", flush=True)
                                 if is_mystery:
-                                    extra = lookup_user(user.sec_uid)
+                                    if not extra:
+                                        extra = lookup_user(user.sec_uid)
                                     if extra and extra.get('nickname') and extra['nickname'] == display:
                                         is_mystery = False
                                 if is_mystery:
@@ -339,6 +377,7 @@ class RoomListener:
                                         'badge_level': badge_lv,
                                         'consume_level': user.consume_diamond_level,
                                         'unique_id': user_id_str(user),
+                                        'mystery_man': mm,
                                         'is_regular': False}
                                     if extra:
                                         if extra.get('nickname') and extra['nickname'] != real_name:
@@ -347,14 +386,26 @@ class RoomListener:
                                     chat_info['room_id'] = self.room_id
                                     chat_info['room_nickname'] = self.nickname
                                     self.send_event('mystery_chat', chat_info)
+                                    # 全部页：私密直播间用户（sec_uid为空）也写入磁盘记录
+                                    if _record_all_enabled and not chat_info.get('sec_uid'):
+                                        rec = chat_info.copy()
+                                        rec['event_type'] = 'chat'
+                                        self._write_all_user(rec)
                                 elif _record_all_enabled:
+                                    # 私密直播间：用缓存补全真实名
+                                    if extra and extra.get('nickname'):
+                                        chat_real_name = extra['nickname']
+                                    else:
+                                        chat_real_name = real_name
                                     chat_info = {
-                                        'display': display, 'real_name': real_name,
+                                        'display': display, 'real_name': chat_real_name,
                                         'content': msg.content, 'sec_uid': user.sec_uid,
                                         'badge_level': get_badge_level(user),
                                         'consume_level': user.consume_diamond_level,
                                         'unique_id': user_id_str(user),
                                         'is_regular': True, 'event_type': 'chat'}
+                                    if extra:
+                                        chat_info['extra'] = extra
                                     chat_info['room_id'] = self.room_id
                                     chat_info['room_nickname'] = self.nickname
                                     self._write_all_user(chat_info)
@@ -365,8 +416,17 @@ class RoomListener:
                                     msg.ParseFromString(item.payload)
                                     user = msg.user
                                     is_mystery, display, real_name, mm = is_real_mystery_user(user)
-                                    if is_mystery:
+                                    # 私密直播间：有sec_uid就查API缓存真实名
+                                    extra = None
+                                    if user.sec_uid:
                                         extra = lookup_user(user.sec_uid)
+                                        if extra and extra.get('nickname'):
+                                            print(f"[CACHE] 缓存写入: room={self.room_id} display={display} -> {extra.get('nickname','?')}", flush=True)
+                                            if extra.get('nickname') != real_name:
+                                                real_name = extra['nickname']
+                                            extra['sec_uid'] = user.sec_uid
+                                            _private_name_cache[f"{self.room_id}:{display}"] = extra
+                                    if is_mystery:
                                         if extra and extra.get('nickname') and extra['nickname'] == display:
                                             is_mystery = False
                                     if is_mystery:
@@ -379,21 +439,26 @@ class RoomListener:
                                             'unique_id': user_id_str(user),
                                             'is_regular': False}
                                         if extra:
-                                            if extra.get('nickname') and extra['nickname'] != real_name:
-                                                gift_info['real_name'] = extra['nickname']
                                             gift_info['extra'] = extra
                                         gift_info['room_id'] = self.room_id
                                         gift_info['room_nickname'] = self.nickname
                                         self.send_event('mystery_gift', gift_info)
                                     elif _record_all_enabled:
+                                        # 私密直播间：用缓存补全真实名
+                                        if extra and extra.get('nickname') and extra['nickname'] != display:
+                                            gift_real_name = extra['nickname']
+                                        else:
+                                            gift_real_name = real_name
                                         gift_info = {
-                                            'display': display, 'real_name': real_name,
+                                            'display': display, 'real_name': gift_real_name,
                                             'sec_uid': user.sec_uid, 'gift_name': msg.gift.name if msg.gift else '?',
                                             'count': msg.comboCount,
                                             'badge_level': get_badge_level(user),
                                             'consume_level': user.consume_diamond_level,
                                             'unique_id': user_id_str(user),
                                             'is_regular': True, 'event_type': 'gift'}
+                                        if extra:
+                                            gift_info['extra'] = extra
                                         gift_info['room_id'] = self.room_id
                                         gift_info['room_nickname'] = self.nickname
                                         self._write_all_user(gift_info)
@@ -417,6 +482,16 @@ class RoomListener:
                     def ping():
                         while self.running:
                             try:
+                                # 每30秒检查一次下播（如果超过3分钟没收到消息）
+                                if time.time() - self.last_msg_time > 180:
+                                    try:
+                                        info = DouyinAPI.get_live_info(cu.dy_live_auth, str(self.room_id))
+                                        if not info or not isinstance(info, dict) or info.get('room_status') != '2':
+                                            self.send_event('room_offline', {'room_id': self.room_id, 'nickname': self.nickname, 'mystery_count': self.mystery_count})
+                                            self.running = False
+                                            break
+                                    except:
+                                        pass
                                 f = Live_pb2.PushFrame()
                                 f.payloadType = "hb"
                                 ws.send(f.SerializeToString(), opcode=0x02)
@@ -576,6 +651,8 @@ def all_records(room_id):
                 line = line.strip()
                 if line:
                     records.append(json.loads(line))
+        if records:
+            print(f"[API] all_records: {len(records)}条, 最新extra={bool(records[-1].get('extra'))}, real_name={records[-1].get('real_name','?')}", flush=True)
         return jsonify({'success': True, 'records': records[-500:]})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
@@ -630,7 +707,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 h1{font-size:26px;text-align:center;padding:12px 0 8px;background:linear-gradient(135deg,#fe2c55,#ff6b35,#fe2c55,#ff6b35,#fe2c55);background-size:300% 100%;-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;font-weight:700;animation:titleShimmer 4s ease-in-out infinite}
 @keyframes titleShimmer{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
 .input-group{display:flex;gap:8px;margin:12px 0}
-.input-group input{flex:1;padding:12px 14px;border:1px solid #333;border-radius:10px;background:#1a1a1a;color:#e0e0e0;font-size:15px;outline:none;transition:border .2s}
+.input-group input{flex:1;padding:12px 14px;border:1px solid #333;border-radius:10px;background:rgba(26,26,26,0.75);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);color:#e0e0e0;font-size:15px;outline:none;transition:border .2s}
 .input-group input:focus{border-color:#fe2c55}
 .input-group input::placeholder{color:#666}
 .input-group button{padding:12px 18px;border:none;border-radius:10px;background:linear-gradient(135deg,#fe2c55,#ff6b35);color:#fff;font-size:15px;font-weight:600;cursor:pointer;white-space:nowrap;transition:opacity .2s}
@@ -648,7 +725,7 @@ h1{font-size:26px;text-align:center;padding:12px 0 8px;background:linear-gradien
 .stop-all-item:hover{background:rgba(254,44,85,.1)}
 .stop-cancel{display:block;text-align:center;margin-top:10px;padding:8px;color:#888;font-size:12px;cursor:pointer;border-radius:8px}
 .stop-cancel:hover{background:#222}
-.status-bar{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#1a1a1a;border-radius:10px;margin:8px 0;font-size:13px;color:#999}
+.status-bar{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:rgba(26,26,26,0.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-radius:10px;margin:8px 0;font-size:13px;color:#999}
 .status-bar .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
 .status-bar .dot.green{background:#34c759}
 .status-bar .dot.red{background:#ff3b30}
@@ -693,7 +770,7 @@ h1{font-size:26px;text-align:center;padding:12px 0 8px;background:linear-gradien
 .events:empty,.events:has(.empty){display:block}
 .events::-webkit-scrollbar{width:4px}
 .events::-webkit-scrollbar-thumb{background:#333;border-radius:2px}
-.event{padding:7px 9px;border-radius:8px;font-size:12px;line-height:1.4;overflow:hidden;height:108px;min-height:108px}
+.event{padding:7px 9px;border-radius:8px;font-size:12px;line-height:1.4;overflow:hidden;height:108px;min-height:108px;background:rgba(26,26,26,0.7);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
 .event.exp{height:auto;min-height:108px}
 </style>
   <script src="/static/anime.min.js"></script>
@@ -1022,7 +1099,7 @@ function handleEvent(event, roomId) {
         time: Date.now(), expanded: false,
         is_regular: d.is_regular || false
       }
-      if (currentView !== 'all') renderMysteries()
+      if (currentView !== 'all') renderSingleCard(mKey(d))
       break
     case 'mystery_chat':
       if (!mysteries[mKey(d)]) {
@@ -1037,7 +1114,7 @@ function handleEvent(event, roomId) {
         }
       }
       mysteries[mKey(d)].chats.push({content: d.content, time: Date.now()})
-      if (currentView !== 'all') renderMysteries()
+      if (currentView !== 'all') renderSingleCard(mKey(d))
       break
     case 'mystery_gift':
       if (!mysteries[mKey(d)]) {
@@ -1050,9 +1127,13 @@ function handleEvent(event, roomId) {
           room_nickname: d.room_nickname || roomNick,
           enter_count: 0, is_regular: d.is_regular || false
         }
+      } else if (d.real_name && d.real_name !== d.display) {
+        // 私密直播间：送礼拿到真实名，更新已有记录
+        mysteries[mKey(d)].real_name = d.real_name
+        if (d.extra) mysteries[mKey(d)].extra = d.extra
       }
       mysteries[mKey(d)].gifts.push({name: d.gift_name, count: d.count, time: Date.now()})
-      if (currentView !== 'all') renderMysteries()
+      if (currentView !== 'all') renderSingleCard(mKey(d))
       break
     case 'room_offline':
       setStatus('已断开', 'red')
@@ -1104,7 +1185,7 @@ function renderMysteries() {
       if (m.consume_level) html += ` <span class="tag dia" style="font-size:9px">💎${m.consume_level}</span>`
     }
     html += `</div>`
-    html += `<span style="color:#666;font-size:11px;cursor:pointer;flex-shrink:0" onclick="toggleExpand('${secUid}')">${m.expanded ? '▲' : '▼'}</span>`
+    html += `<span style="color:#666;font-size:11px;cursor:pointer;flex-shrink:0;user-select:none" class="toggle-btn" data-collapsed="▼ ${totalActions}条互动" onclick="toggleExpand('${secUid}')">${m.expanded ? '▲ 收起' : `▼ ${totalActions}条互动`}</span>`
     html += `</div>`
     // 名字（可点击展开）
     html += `<div class="name-box"><span class="name-text ${isRegular?'rn':'mn'}" onclick="toggleName('${secUid}')">${escapeHtml(m.real_name)}`
@@ -1142,6 +1223,80 @@ function renderMysteries() {
   container.innerHTML = html
 }
 
+// 单张卡片增量更新（SSE 事件用，避免全量重绘+动画抖动）
+function renderSingleCard(key) {
+  const m = mysteries[key]
+  if (!m || currentView === 'all') return
+
+  const container = document.getElementById('events')
+  // 移除空状态
+  const empty = container.querySelector('.empty')
+  if (empty) container.innerHTML = ''
+
+  const roomColors = ['#fe2c55', '#5ac8fa', '#34c759']
+  const roomMap = {}; let ci = 0
+  Object.keys(currentRooms).forEach(rid => { roomMap[rid] = ci++ % 3 })
+
+  // 生成单张卡片 HTML（复用 renderMysteries 里的卡片逻辑）
+  const isRegular = m.is_regular || false
+  const uniqueId = m.unique_id || m.extra?.unique_id || m.sec_uid?.slice(0,12) || '?'
+  const followerText = m.extra ? `粉丝${m.extra.follower_count} 作品${m.extra.aweme_count}` : ''
+  const ipText = m.extra?.ip_location ? `🌍 ${m.extra.ip_location}` : ''
+  const totalActions = m.chats.length + m.gifts.length
+  const colorIdx = roomMap[m.room_id] !== undefined ? roomMap[m.room_id] : 0
+  const roomColor = roomColors[colorIdx]
+
+  let cardHtml = `<div class="event ${isRegular ? 'regular' : 'mystery'}${m.expanded?' exp':''}" data-su="${key}">`
+  cardHtml += `<div style="display:flex;justify-content:space-between;align-items:start">`
+  cardHtml += `<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;min-width:0;flex:1">`
+  cardHtml += `<span style="font-size:10px;color:${roomColor};font-weight:600">${escapeHtml(m.room_nickname || '?')}</span>`
+  if (isRegular) {
+    cardHtml += ` <span class="tag reg" style="font-size:9px">普通</span>`
+  } else {
+    if (m.badge_level) cardHtml += ` <span class="tag lv" style="font-size:9px">🏅${m.badge_level}</span>`
+    if (m.consume_level) cardHtml += ` <span class="tag dia" style="font-size:9px">💎${m.consume_level}</span>`
+  }
+  cardHtml += `</div>`
+  cardHtml += `<span style="color:#666;font-size:11px;cursor:pointer;flex-shrink:0;user-select:none" class="toggle-btn" data-collapsed="▼ ${totalActions}条互动" onclick="toggleExpand('${key}')">${m.expanded ? '▲ 收起' : `▼ ${totalActions}条互动`}</span>`
+  cardHtml += `</div>`
+  cardHtml += `<div class="name-box"><span class="name-text ${isRegular?'rn':'mn'}" onclick="toggleName('${key}')">${escapeHtml(m.real_name)}`
+  if (m.display && m.display !== m.real_name) {
+    cardHtml += `<span class="dp">${escapeHtml(m.display)}</span>`
+  }
+  cardHtml += `</span></div>`
+  cardHtml += `<div style="font-size:10px;color:#888;margin:1px 0">🆔 ${escapeHtml(uniqueId)}</div>`
+  if (followerText && !isRegular) cardHtml += `<div style="font-size:10px;color:#888">📊 ${followerText}</div>`
+  if (ipText) cardHtml += `<div style="font-size:10px;color:#888">${ipText}</div>`
+  if (m.extra?.signature && !isRegular) cardHtml += `<div style="font-size:10px;color:#777;margin-top:1px">📝 ${escapeHtml(m.extra.signature)}</div>`
+  cardHtml += `<div style="font-size:10px;color:#777;margin:1px 0">`
+  if (m.enter_count) cardHtml += `🚪${m.enter_count}次 `
+  if (m.chats.length) cardHtml += `💬${m.chats.length}条 `
+  if (m.gifts.length) cardHtml += `🎁${m.gifts.length}个`
+  cardHtml += `</div>`
+  cardHtml += `<div style="font-size:10px;color:#555;margin-top:1px"><a class="link" href="javascript:;" onclick="window.open('https://www.douyin.com/user/${key}','_blank')">🔗 主页</a></div>`
+  if (totalActions > 0) {
+    cardHtml += `<div id="actions-${key}" style="display:${m.expanded?'block':'none'};margin-top:6px;border-top:1px solid #222;padding-top:4px">`
+    m.chats.forEach(c => {
+      cardHtml += `<div style="font-size:11px;color:#ccc;padding:2px 0">💬 ${escapeHtml(c.content)}</div>`
+    })
+    m.gifts.forEach(g => {
+      cardHtml += `<div style="font-size:11px;color:#ff9500;padding:2px 0">🎁 ${escapeHtml(g.name)} x${g.count}</div>`
+    })
+    cardHtml += `</div>`
+    cardHtml += `<div style="font-size:11px;color:#666;margin-top:2px;cursor:pointer" onclick="toggleExpand('${key}')">`
+    cardHtml += m.expanded ? '▲ 收起' : `▼ ${totalActions}条互动`
+    cardHtml += `</div>`
+  }
+  cardHtml += `</div>`
+
+  const existing = container.querySelector(`[data-su="${CSS.escape(key)}"]`)
+  if (existing) {
+    existing.outerHTML = cardHtml
+  } else {
+    container.insertAdjacentHTML('beforeend', cardHtml)
+  }
+}
+
 // 全部用户模式：从磁盘读取并渲染（卡片形式）
 let _allUsersCache = null  // 缓存数据，展开收起时不重复请求
 function renderAllRecords(skipFetch) {
@@ -1172,7 +1327,7 @@ function renderAllRecords(skipFetch) {
         // 判断是否私密直播（sec_uid空+unique_id='?'代表所有用户被脱敏）
         const isPrivate = !r.sec_uid && (!r.unique_id || r.unique_id === '?')
         const uid = isPrivate
-          ? r.room_id + ':' + r.real_name + ':' + (r.consume_level||0) + ':' + (r.badge_level||0)
+          ? r.room_id + ':' + (r.display || r.real_name) + ':' + (r.consume_level||0) + ':' + (r.badge_level||0)
           : r.sec_uid || r.unique_id || r.real_name || '?'
         if (!userMap[uid]) {
           const colorIdx = roomMap[r.room_id] !== undefined ? roomMap[r.room_id] : ridx
@@ -1180,10 +1335,11 @@ function renderAllRecords(skipFetch) {
             display: r.display, real_name: r.real_name,
             unique_id: r.unique_id || '', sec_uid: r.sec_uid || '',
             badge_level: r.badge_level || 0, consume_level: r.consume_level || 0,
+            mystery_man: r.mystery_man || 0,
             room_id: r.room_id, room_nickname: r.room_nickname,
             roomColor: roomColors[colorIdx],
             enter_count: 0, chats: [], gifts: [], time: r.time || 0,
-            expanded: false
+            expanded: false, extra: null
           }
         }
         const u = userMap[uid]
@@ -1193,17 +1349,115 @@ function renderAllRecords(skipFetch) {
         if (!u.real_name && r.real_name) u.real_name = r.real_name
         if ((r.badge_level || 0) > u.badge_level) u.badge_level = r.badge_level
         if ((r.consume_level || 0) > u.consume_level) u.consume_level = r.consume_level
+        if (!u.extra && r.extra) u.extra = r.extra
         if (r.event_type === 'enter') {
           u.enter_count++
         } else if (r.event_type === 'chat') {
           if (u.chats.length < 20) u.chats.push({content: r.content, time: r.time})
         } else if (r.event_type === 'gift') {
           if (u.gifts.length < 20) u.gifts.push({name: r.gift_name, count: r.count, time: r.time})
+          // 私密直播间：礼物有extra则刷新真实名和用户数据
+          if (r.extra && r.extra.nickname && r.extra.nickname !== u.real_name) {
+            u.real_name = r.extra.nickname
+            u.extra = r.extra
+          }
         }
       })
     })
 
-    const users = Object.values(userMap).sort((a, b) => b.time - a.time)
+    // 按真实身份合并：同一room:display下，确认是同一人才合并
+    const rawUsers = Object.values(userMap)
+    const merged = []
+    const mergeTracker = {} // "room:display" -> {identity: index}
+    rawUsers.forEach(u => {
+      const key = u.room_id + ':' + u.display
+      const identity = (u.extra && u.extra.nickname) || u.real_name || '??'
+      if (!mergeTracker[key]) mergeTracker[key] = {}
+      // 完全相同的identity → 直接合并
+      if (mergeTracker[key][identity] !== undefined) {
+        const m = merged[mergeTracker[key][identity]]
+        m.enter_count = (m.enter_count||0) + (u.enter_count||0)
+        m.chats = [...(m.chats||[]), ...(u.chats||[])].slice(0, 20)
+        m.gifts = [...(m.gifts||[]), ...(u.gifts||[])].slice(0, 20)
+        if (u.time > m.time) m.time = u.time
+        if ((u.badge_level||0) > (m.badge_level||0)) m.badge_level = u.badge_level
+        if ((u.consume_level||0) > (m.consume_level||0)) m.consume_level = u.consume_level
+        if (u.extra && u.extra.nickname) { m.real_name = u.extra.nickname } else if (!m.real_name && u.real_name) { m.real_name = u.real_name }
+        if (!m.unique_id && u.unique_id) m.unique_id = u.unique_id
+        if (!m.extra && u.extra) m.extra = u.extra
+        if ((u.mystery_man||0) > (m.mystery_man||0)) m.mystery_man = u.mystery_man
+        return
+      }
+      // 找已有的卡片：检查是否同一人
+      let found = -1
+      for (const id2 in mergeTracker[key]) {
+        const m = merged[mergeTracker[key][id2]]
+        if (u.extra && u.extra.nickname && u.extra.nickname === m.real_name) {
+          found = mergeTracker[key][id2]
+          break
+        }
+        if (m.extra && m.extra.nickname && m.extra.nickname === u.real_name) {
+          found = mergeTracker[key][id2]
+          break
+        }
+        if (!u.extra && !m.extra && u.real_name === m.real_name) {
+          found = mergeTracker[key][id2]
+          break
+        }
+        if (u.mystery_man >= 2 && m.mystery_man >= 2 && u.display === m.display) {
+          found = mergeTracker[key][id2]
+          break
+        }
+        // 私密直播间：同一display一个有extra一个没有→同一人（先来的没缓存，后来的送礼查到真实信息了）
+        if (u.display === m.display && (u.extra ? 1 : 0) !== (m.extra ? 1 : 0)) {
+          found = mergeTracker[key][id2]
+          break
+        }
+      }
+      if (found >= 0) {
+        mergeTracker[key][identity] = found
+        const m = merged[found]
+        m.enter_count = (m.enter_count||0) + (u.enter_count||0)
+        m.chats = [...(m.chats||[]), ...(u.chats||[])].slice(0, 20)
+        m.gifts = [...(m.gifts||[]), ...(u.gifts||[])].slice(0, 20)
+        if (u.time > m.time) m.time = u.time
+        if ((u.badge_level||0) > (m.badge_level||0)) m.badge_level = u.badge_level
+        if ((u.consume_level||0) > (m.consume_level||0)) m.consume_level = u.consume_level
+        if (u.extra && u.extra.nickname) { m.real_name = u.extra.nickname } else if (!m.real_name && u.real_name) { m.real_name = u.real_name }
+        if (!m.unique_id && u.unique_id) m.unique_id = u.unique_id
+        if (!m.extra && u.extra) m.extra = u.extra
+        if ((u.mystery_man||0) > (m.mystery_man||0)) m.mystery_man = u.mystery_man
+      } else {
+        mergeTracker[key][identity] = merged.length
+        merged.push({
+          display: u.display, real_name: u.real_name,
+          sec_uid: u.sec_uid || '', unique_id: u.unique_id || '',
+          badge_level: u.badge_level || 0, consume_level: u.consume_level || 0,
+          mystery_man: u.mystery_man || 0,
+          room_id: u.room_id, room_nickname: u.room_nickname,
+          roomColor: u.roomColor,
+          enter_count: u.enter_count || 0,
+          chats: [...(u.chats||[])],
+          gifts: [...(u.gifts||[])],
+          time: u.time || 0, expanded: false, extra: u.extra || null
+        })
+      }
+    })
+    const users = merged.sort((a, b) => b.time - a.time)
+    // 私密直播间：从mysteries实时数据里补全真实名和extra
+    users.forEach(u => {
+      if (u.extra === null) {
+        // 在mysteries里按display匹配（送礼更新过real_name和extra）
+        for (const mk in mysteries) {
+          const m = mysteries[mk]
+          if (m.room_id === u.room_id && m.extra && (m.display === u.display || m.display === u.real_name)) {
+            u.real_name = m.real_name
+            u.extra = m.extra
+            break
+          }
+        }
+      }
+    })
     _allUsersCache = users
     renderAllCards(users, container, roomColors, roomMap)
   }).catch(() => {
@@ -1221,22 +1475,31 @@ function renderAllCards(users, container, roomColors, roomMap) {
   let html = ''
   users.forEach((u, idx) => {
     const totalActions = u.chats.length + u.gifts.length
-    const uid = u.sec_uid || u.unique_id || 'u' + idx
+    const uid = u.sec_uid || (u.unique_id && u.unique_id !== '?' ? u.unique_id : 'u' + idx)
     const uname = escapeHtml(u.real_name || u.display || u.unique_id || '?')
-    const uniqueId = escapeHtml(u.unique_id || u.sec_uid?.slice(0,12) || '?')
+    const uniqueId = escapeHtml(u.unique_id || u.sec_uid?.slice(0,12) || u.extra?.sec_uid?.slice(0,12) || '?')
 
-    html += `<div class="event regular${u.expanded?' exp':''}" data-su="${uid}" style="height:auto;min-height:80px">`
+    const isMystery = u.mystery_man >= 2
+    html += `<div class="event ${isMystery?'mystery':'regular'}${u.expanded?' exp':''}" data-su="${uid}" style="height:auto;min-height:80px">`
     html += `<div style="display:flex;justify-content:space-between;align-items:start">`
     html += `<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;min-width:0;flex:1">`
     html += `<span style="font-size:10px;color:${u.roomColor};font-weight:600">${escapeHtml(u.room_nickname || '?')}</span>`
-    html += ` <span class="tag reg" style="font-size:9px">普通</span>`
+    html += ` <span class="tag ${isMystery?'mystery':'reg'}" style="font-size:9px${isMystery ? ';color:#fe2c55':''}">${isMystery ? '神秘人' : '普通'}</span>`
     if (u.badge_level) html += ` <span class="tag lv" style="font-size:9px">🏅${u.badge_level}</span>`
     if (u.consume_level) html += ` <span class="tag dia" style="font-size:9px">💎${u.consume_level}</span>`
     html += `</div>`
-    html += `<span style="color:#666;font-size:11px;cursor:pointer;flex-shrink:0" onclick="toggleAllExpand('${uid}',${idx})">${u.expanded ? '▲' : '▼'}</span>`
+    html += `<span style="color:#666;font-size:11px;cursor:pointer;flex-shrink:0;user-select:none" class="toggle-btn" data-collapsed="▼ ${totalActions}条互动" onclick="toggleAllExpand('${uid}',${idx})">${u.expanded ? '▲ 收起' : `▼ ${totalActions}条互动`}</span>`
     html += `</div>`
-    html += `<div class="name-box"><span class="name-text rn">${uname}</span></div>`
+    html += `<div class="name-box"><span class="name-text ${isMystery?'mn':'rn'}">${escapeHtml(u.real_name || u.display || '?')}${u.display && u.display !== (u.real_name||u.display) ? `<span class="dp">${escapeHtml(u.display)}</span>` : ''}</span></div>`
     html += `<div style="font-size:10px;color:#888;margin:1px 0">🆔 ${uniqueId}</div>`
+    // 私密直播间：有真实数据则显示粉丝数/IP/签名/主页
+    if (u.extra && u.extra.nickname) {
+      const ft = `粉丝${u.extra.follower_count} 作品${u.extra.aweme_count}`
+      if (ft) html += `<div style="font-size:10px;color:#888">📊 ${ft}</div>`
+      if (u.extra.ip_location) html += `<div style="font-size:10px;color:#888">🌍 ${escapeHtml(u.extra.ip_location)}</div>`
+      if (u.extra.signature) html += `<div style="font-size:10px;color:#777;margin-top:1px">📝 ${escapeHtml(u.extra.signature)}</div>`
+      if (u.extra.sec_uid) html += `<div style="font-size:10px;color:#555;margin-top:1px"><a class="link" href="javascript:;" onclick="window.open('https://www.douyin.com/user/${u.extra.sec_uid}','_blank')">🔗 主页</a></div>`
+    }
     html += `<div style="font-size:10px;color:#777;margin:1px 0">`
     if (u.enter_count) html += `🚪${u.enter_count}次 `
     if (u.chats.length) html += `💬${u.chats.length}条 `
@@ -1251,7 +1514,7 @@ function renderAllCards(users, container, roomColors, roomMap) {
         html += `<div style="font-size:11px;color:#ff9500;padding:2px 0">🎁 ${escapeHtml(g.name)} x${g.count}</div>`
       })
       html += `</div>`
-      html += `<div style="font-size:11px;color:#666;margin-top:2px;cursor:pointer" onclick="toggleAllExpand('${uid}',${idx})">`
+      html += `<div style="font-size:11px;color:#666;margin-top:2px;cursor:pointer;user-select:none" class="toggle-btn" data-collapsed="▼ ${totalActions}条互动" onclick="toggleAllExpand('${uid}',${idx})">`
       html += u.expanded ? '▲ 收起' : `▼ ${totalActions}条互动`
       html += `</div>`
     }
@@ -1265,14 +1528,26 @@ function toggleAllExpand(key, idx) {
   const users = _allUsersCache
   if (users && users[idx]) {
     users[idx].expanded = !users[idx].expanded
-    renderAllRecords(true)
+    const card = document.querySelector(`[data-su="${CSS.escape(key)}"]`)
+    if (card) card.classList.toggle('exp')
+    const actions = document.getElementById(`all-actions-${key}`)
+    if (actions) actions.style.display = users[idx].expanded ? 'block' : 'none'
+    card?.querySelectorAll('.toggle-btn').forEach(btn => {
+      btn.textContent = users[idx].expanded ? '▲ 收起' : btn.dataset.collapsed
+    })
   }
 }
 
 function toggleExpand(secUid) {
   if (mysteries[secUid]) {
     mysteries[secUid].expanded = !mysteries[secUid].expanded
-    renderMysteries()
+    const card = document.querySelector(`[data-su="${CSS.escape(secUid)}"]`)
+    if (card) card.classList.toggle('exp')
+    const actions = document.getElementById(`actions-${secUid}`)
+    if (actions) actions.style.display = mysteries[secUid].expanded ? 'block' : 'none'
+    card?.querySelectorAll('.toggle-btn').forEach(btn => {
+      btn.textContent = mysteries[secUid].expanded ? '▲ 收起' : btn.dataset.collapsed
+    })
   }
 }
 
