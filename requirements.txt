@@ -1,0 +1,17 @@
+aiofiles
+loguru
+python-dotenv
+retry
+openpyxl
+urllib3
+PyExecJS
+requests
+websockets
+websocket-client
+beautifulsoup4
+Flask
+protobuf
+protobuf-to-dict
+qrcode
+Pillow
+aiohttp

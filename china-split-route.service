@@ -1,0 +1,22 @@
+[Unit]
+Description=Restore China IP split routing (with Douyin WS fix)
+After=network-online.target warp-svc.service
+Wants=network-online.target warp-svc.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/sbin/ipset restore -! -f /etc/ipset.conf
+ExecStart=/bin/sh -c '\
+  /sbin/ipset create douyin-ws hash:net 2>/dev/null; \
+  /sbin/ipset add douyin-ws 111.62.113.0/24 2>/dev/null; \
+  /sbin/ipset add douyin-ws 163.181.66.0/24 2>/dev/null; \
+  /sbin/ipset add douyin-ws 98.96.242.0/24 2>/dev/null; \
+  /sbin/ipset add douyin-ws 98.96.213.0/24 2>/dev/null; \
+  /sbin/iptables -t mangle -C OUTPUT -m set --match-set douyin-ws dst -j RETURN 2>/dev/null || \
+  /sbin/iptables -t mangle -I OUTPUT 1 -m set --match-set douyin-ws dst -j RETURN; \
+  /sbin/iptables -t mangle -C OUTPUT -m set --match-set china dst -j MARK --set-mark 0x100cf 2>/dev/null || \
+  /sbin/iptables -t mangle -A OUTPUT -m set --match-set china dst -j MARK --set-mark 0x100cf'
+
+[Install]
+WantedBy=multi-user.target
