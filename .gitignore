@@ -31,3 +31,4 @@ env.bak/
 venv.bak/
 datas
 .env
+.env.bak
