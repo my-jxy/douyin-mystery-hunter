@@ -169,6 +169,40 @@ def _load_room_history(room_id):
             WHERE room_id = ?
         ''', (room_id,))
         dn_rows = cur2.fetchall()
+        # === 跨房间合并：拿到当前所有 sec_uid 在其他房间的更好信息 ===
+        cross_better = {}  # sec_uid -> {real_name, extra}
+        if rows:
+            all_sec_uids = list(set(r['sec_uid'] for r in rows))
+            placeholders = ','.join('?' * len(all_sec_uids))
+            cur3 = conn.execute(f'''
+                SELECT sec_uid, real_name, extra, nickname, last_seen
+                FROM mystery_records
+                WHERE sec_uid IN ({placeholders})
+            ''', all_sec_uids)
+            for cr in cur3.fetchall():
+                su = cr['sec_uid']
+                if su not in cross_better:
+                    cross_better[su] = {'real_name': '', 'extra': {}, 'nickname': '', 'last_seen': 0}
+                cb = cross_better[su]
+                # 找最好的 real_name（非机器名）
+                rn = (cr['real_name'] or '').strip()
+                if rn and not rn.startswith('dou') and not rn.startswith('神秘人'):
+                    cur_best = cb['real_name']
+                    if not cur_best or cur_best.startswith('dou') or cur_best.startswith('神秘人'):
+                        cb['real_name'] = rn
+                # 找最好的 extra（带 unique_id / nickname）
+                if cr['extra']:
+                    try:
+                        xe = json.loads(cr['extra']) if isinstance(cr['extra'], str) else cr['extra']
+                        if isinstance(xe, dict):
+                            for fld in ('unique_id', 'nickname', 'follower_count'):
+                                if not cb['extra'].get(fld) and xe.get(fld):
+                                    cb['extra'][fld] = xe[fld]
+                    except:
+                        pass
+                # 保留最新的 last_seen
+                cb['last_seen'] = max(cb['last_seen'], cr['last_seen'] or 0)
+        
         conn.close()
         
         # 按 sec_uid 分组，合并最佳数据
@@ -222,6 +256,34 @@ def _load_room_history(room_id):
                 # 保留最新的 last_seen
                 if (row.get('last_seen') or 0) > (existing.get('last_seen') or 0):
                     existing['last_seen'] = row['last_seen']
+        
+        # === 跨房间信息合并：用其他房间更好的 real_name / extra 补充 ===
+        for su, cb in cross_better.items():
+            if su not in merged:
+                continue
+            existing = merged[su]
+            # 合并 real_name
+            cb_rn = cb.get('real_name', '') or ''
+            if cb_rn:
+                ex_rn = existing.get('real_name', '') or ''
+                if (not ex_rn) or (ex_rn.startswith('dou') or ex_rn.startswith('神秘人')):
+                    existing['real_name'] = cb_rn
+            # 合并 extra
+            cb_extra = cb.get('extra', {}) or {}
+            if cb_extra:
+                ex_extra = existing.get('extra') or {}
+                if not isinstance(ex_extra, dict):
+                    ex_extra = {}
+                new_extra = dict(ex_extra)
+                changed = False
+                for fld in ('unique_id', 'nickname', 'follower_count'):
+                    if not new_extra.get(fld) and cb_extra.get(fld):
+                        new_extra[fld] = cb_extra[fld]
+                        changed = True
+                if changed:
+                    existing['extra'] = new_extra
+            # 保留最新的 last_seen
+            existing['last_seen'] = max(existing.get('last_seen', 0) or 0, cb.get('last_seen', 0) or 0)
         
         result = list(merged.values())
         result.sort(key=lambda x: x.get('last_seen', 0) or 0, reverse=True)
