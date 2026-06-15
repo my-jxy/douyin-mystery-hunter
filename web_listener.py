@@ -37,30 +37,33 @@ def _init_db():
     conn = sqlite3.connect(_DB_PATH)
     conn.execute('''
         CREATE TABLE IF NOT EXISTS mystery_records (
-            room_id TEXT NOT NULL,
             sec_uid TEXT NOT NULL,
             display TEXT,
             real_name TEXT DEFAULT '',
             nickname TEXT DEFAULT '',
             extra TEXT DEFAULT '{}',
+            last_room_id TEXT DEFAULT '',
+            seen_room_ids TEXT DEFAULT '',
             first_seen INTEGER DEFAULT 0,
             last_seen INTEGER DEFAULT 0,
             enter_count INTEGER DEFAULT 0,
             gift_count INTEGER DEFAULT 0,
             chat_count INTEGER DEFAULT 0,
             is_regular INTEGER DEFAULT 0,
-            PRIMARY KEY (room_id, sec_uid, display)
+            PRIMARY KEY (sec_uid, display)
         )
     ''')
     conn.execute('''
+        CREATE INDEX IF NOT EXISTS idx_mr_last_room ON mystery_records(last_room_id)
+    ''')
+    conn.execute('''
         CREATE TABLE IF NOT EXISTS display_names (
-            room_id TEXT NOT NULL,
             sec_uid TEXT NOT NULL,
             display TEXT NOT NULL,
             seen_count INTEGER DEFAULT 1,
             first_seen INTEGER DEFAULT 0,
             last_seen INTEGER DEFAULT 0,
-            PRIMARY KEY (room_id, sec_uid, display)
+            PRIMARY KEY (sec_uid, display)
         )
     ''')
     conn.execute('''
@@ -77,7 +80,7 @@ def _init_db():
     ''')
     conn.execute('''
         CREATE INDEX IF NOT EXISTS idx_interaction_log
-        ON interaction_log(room_id, sec_uid, display, timestamp)
+        ON interaction_log(sec_uid, timestamp)
     ''')
     conn.commit()
     conn.close()
@@ -85,12 +88,11 @@ def _init_db():
 _init_db()
 
 def _save_mystery_record(room_id, sec_uid, display, real_name, extra, event_type, timestamp=None, is_regular=0, room_nickname=None):
-    """保存或更新神秘人记录到 SQLite"""
-    if not sec_uid or not room_id:
+    """保存或更新记录。无 sec_uid 的匿名用户不存储"""
+    if not sec_uid:
         return
     if timestamp is None:
         timestamp = int(time.time())
-    # 如果 extra 有真实昵称但 real_name 还是显示名，用 extra 的补上
     if extra and isinstance(extra, dict) and extra.get('nickname'):
         if not real_name or real_name == display:
             real_name = extra['nickname']
@@ -99,35 +101,85 @@ def _save_mystery_record(room_id, sec_uid, display, real_name, extra, event_type
         if room_nickname:
             extra['room_nickname'] = room_nickname
         conn = sqlite3.connect(_DB_PATH)
-        # 主记录 upsert
-        cur = conn.execute('''
-            INSERT INTO mystery_records (room_id, sec_uid, display, real_name, extra, first_seen, last_seen, is_regular,
-                enter_count, gift_count, chat_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?,
-                CASE WHEN ? = 'enter' THEN 1 ELSE 0 END,
-                CASE WHEN ? = 'gift' THEN 1 ELSE 0 END,
-                CASE WHEN ? = 'chat' THEN 1 ELSE 0 END)
-            ON CONFLICT(room_id, sec_uid, display) DO UPDATE SET
-                real_name = COALESCE(NULLIF(?, ''), real_name),
-                extra = ?,
-                last_seen = ?,
-                is_regular = ?,
-                enter_count = enter_count + CASE WHEN ? = 'enter' THEN 1 ELSE 0 END,
-                gift_count = gift_count + CASE WHEN ? = 'gift' THEN 1 ELSE 0 END,
-                chat_count = chat_count + CASE WHEN ? = 'chat' THEN 1 ELSE 0 END
-        ''', (room_id, sec_uid, display, real_name, json.dumps(extra) if extra else '{}',
-              timestamp, timestamp, is_regular,
-              event_type, event_type, event_type,
-              real_name, json.dumps(extra) if extra else '{}', timestamp, is_regular,
-              event_type, event_type, event_type))
-        # display_name 记录
+        
+        if sec_uid:
+            # 收集同一 sec_uid 所有旧记录的累积数据
+            old_rows = conn.execute(
+                'SELECT real_name, extra, seen_room_ids, enter_count, gift_count, chat_count FROM mystery_records WHERE sec_uid=?',
+                (sec_uid,)
+            ).fetchall()
+            
+            merged_seen = set()
+            merged_enter = 0
+            merged_gift = 0
+            merged_chat = 0
+            best_real_name = real_name
+            merged_extra = dict(extra)
+            for old in old_rows:
+                if old[2]:
+                    for rid in old[2].split(','):
+                        if rid:
+                            merged_seen.add(rid)
+                merged_enter += old[3] or 0
+                merged_gift += old[4] or 0
+                merged_chat += old[5] or 0
+                old_rn = (old[0] or '').strip()
+                if old_rn and not old_rn.startswith('dou') and not old_rn.startswith('神秘人'):
+                    if (not best_real_name) or best_real_name.startswith('dou') or best_real_name.startswith('神秘人'):
+                        best_real_name = real_name = old_rn
+                if old[1]:
+                    try:
+                        old_extra = json.loads(old[1]) if isinstance(old[1], str) else old[1]
+                        for k, v in old_extra.items():
+                            if not merged_extra.get(k):
+                                merged_extra[k] = v
+                    except:
+                        pass
+            
+            # 删掉所有旧记录
+            conn.execute('DELETE FROM mystery_records WHERE sec_uid=?', (sec_uid,))
+            
+            real_name = best_real_name or real_name
+            extra = merged_extra
+            enter_count = merged_enter
+            gift_count = merged_gift
+            chat_count = merged_chat
+            seen_room_ids = merged_seen
+        else:
+            # 匿名用户：按 display 处理，不跨 display 合并
+            enter_count = 0
+            gift_count = 0
+            chat_count = 0
+            seen_room_ids = set()
+        
+        if room_id:
+            seen_room_ids.add(str(room_id))
+        seen_room_ids_str = ','.join(sorted(seen_room_ids))
+        extra_json = json.dumps(extra, ensure_ascii=False) if extra else '{}'
+        
+        # 按事件类型累加本次计数
+        add_enter = 1 if event_type == 'enter' else 0
+        add_gift = 1 if event_type == 'gift' else 0
+        add_chat = 1 if event_type == 'chat' else 0
+        
         conn.execute('''
-            INSERT INTO display_names (room_id, sec_uid, display, first_seen, last_seen)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(room_id, sec_uid, display) DO UPDATE SET
+            INSERT INTO mystery_records (sec_uid, display, real_name, extra, last_room_id, seen_room_ids,
+                first_seen, last_seen, is_regular, enter_count, gift_count, chat_count, nickname)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (sec_uid or '', display or '', real_name, extra_json,
+              str(room_id) if room_id else '', seen_room_ids_str,
+              timestamp, timestamp, is_regular,
+              enter_count + add_enter, gift_count + add_gift, chat_count + add_chat,
+              room_nickname or ''))
+        
+        # display_name 记录（保留所有马甲历史）
+        conn.execute('''
+            INSERT INTO display_names (sec_uid, display, first_seen, last_seen)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(sec_uid, display) DO UPDATE SET
                 seen_count = seen_count + 1,
-                last_seen = ?
-        ''', (room_id, sec_uid, display, timestamp, timestamp, timestamp))
+                last_seen = MAX(last_seen, ?)
+        ''', (sec_uid or '', display or '', timestamp, timestamp, timestamp))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -151,69 +203,50 @@ def _save_interaction(room_id, sec_uid, display, i_type, content='', gift_count=
         print(f"[DB] interaction save error: {e}", flush=True)
 
 def _load_room_history(room_id):
-    """加载某个直播间所有历史记录（仅神秘人），Python 合并去重"""
+    """加载某个直播间所有历史记录（仅神秘人）"""
     try:
         conn = sqlite3.connect(_DB_PATH)
         conn.row_factory = sqlite3.Row
-        # 拿全部记录，不 GROUP BY
+        
+        # 查询该房间出现过的所有神秘人（seen_room_ids 包含 room_id）
         cur = conn.execute('''
             SELECT * FROM mystery_records
-            WHERE room_id = ? AND is_regular = 0
+            WHERE is_regular = 0
             ORDER BY last_seen DESC
-        ''', (room_id,))
-        rows = [dict(r) for r in cur.fetchall()]
-        # 拿该直播间所有 display_names
-        cur2 = conn.execute('''
-            SELECT sec_uid, display, last_seen, seen_count
-            FROM display_names
-            WHERE room_id = ?
-        ''', (room_id,))
-        dn_rows = cur2.fetchall()
-        # === 跨房间合并：拿到当前所有 sec_uid 在其他房间的更好信息 ===
-        cross_better = {}  # sec_uid -> {real_name, extra}
+        ''')
+        all_rows = [dict(r) for r in cur.fetchall()]
+        
+        # 过滤：seen_room_ids 包含该 room_id
+        rows = []
+        for r in all_rows:
+            seen = (r.get('seen_room_ids') or '').split(',')
+            if str(room_id) in seen:
+                rows.append(r)
+        
+        # 拉取所有相关的 display_names
         if rows:
-            all_sec_uids = list(set(r['sec_uid'] for r in rows))
-            placeholders = ','.join('?' * len(all_sec_uids))
-            cur3 = conn.execute(f'''
-                SELECT sec_uid, real_name, extra, nickname, last_seen
-                FROM mystery_records
+            all_sec_uids = list(set(r['sec_uid'] for r in rows if r.get('sec_uid')))
+            placeholders = ','.join('?' * len(all_sec_uids)) if all_sec_uids else "'none'"
+            cur2 = conn.execute(f'''
+                SELECT sec_uid, display, last_seen, seen_count
+                FROM display_names
                 WHERE sec_uid IN ({placeholders})
-            ''', all_sec_uids)
-            for cr in cur3.fetchall():
-                su = cr['sec_uid']
-                if su not in cross_better:
-                    cross_better[su] = {'real_name': '', 'extra': {}, 'nickname': '', 'last_seen': 0}
-                cb = cross_better[su]
-                # 找最好的 real_name（非机器名）
-                rn = (cr['real_name'] or '').strip()
-                if rn and not rn.startswith('dou') and not rn.startswith('神秘人'):
-                    cur_best = cb['real_name']
-                    if not cur_best or cur_best.startswith('dou') or cur_best.startswith('神秘人'):
-                        cb['real_name'] = rn
-                # 找最好的 extra（带 unique_id / nickname）
-                if cr['extra']:
-                    try:
-                        xe = json.loads(cr['extra']) if isinstance(cr['extra'], str) else cr['extra']
-                        if isinstance(xe, dict):
-                            for fld in ('unique_id', 'nickname', 'follower_count'):
-                                if not cb['extra'].get(fld) and xe.get(fld):
-                                    cb['extra'][fld] = xe[fld]
-                    except:
-                        pass
-                # 保留最新的 last_seen
-                cb['last_seen'] = max(cb['last_seen'], cr['last_seen'] or 0)
+            ''', all_sec_uids if all_sec_uids else [])
+            dn_rows = cur2.fetchall()
+        else:
+            dn_rows = []
         
         conn.close()
         
-        # 按 sec_uid 分组，合并最佳数据
-        display_map = {}  # sec_uid -> [{display, last_seen, seen_count}]
+        # 按 sec_uid 分组，合并 display_names
+        display_map = {}
         for d in dn_rows:
             key = d['sec_uid']
             if key not in display_map:
                 display_map[key] = []
             display_map[key].append({'display': d['display'], 'last_seen': d['last_seen'], 'seen_count': d['seen_count']})
         
-        merged = {}  # sec_uid -> merged row
+        merged = {}
         for row in rows:
             key = row['sec_uid']
             if key not in merged:
@@ -227,65 +260,14 @@ def _load_room_history(room_id):
                 merged[key] = row
             else:
                 existing = merged[key]
-                # 保留更好的 real_name（非机器名优先）
-                existing_rn = existing.get('real_name', '')
-                new_rn = row.get('real_name', '')
-                if new_rn and not new_rn.startswith('dou') and not new_rn.startswith('神秘人'):
-                    if existing_rn.startswith('dou') or existing_rn.startswith('神秘人') or not existing_rn:
-                        existing['real_name'] = new_rn
-                # 保留更好的 extra（有 unique_id 和 nickname 优先）
-                if row.get('extra'):
-                    try:
-                        new_extra = json.loads(row['extra']) if isinstance(row['extra'], str) else row['extra']
-                        if new_extra.get('unique_id') or new_extra.get('nickname'):
-                            existing_extra = existing.get('extra') or {}
-                            if not existing_extra.get('unique_id') and new_extra.get('unique_id'):
-                                if not existing.get('extra'):
-                                    existing['extra'] = {}
-                                existing['extra']['unique_id'] = new_extra['unique_id']
-                            if not existing_extra.get('nickname') and new_extra.get('nickname'):
-                                if not existing.get('extra'):
-                                    existing['extra'] = {}
-                                existing['extra']['nickname'] = new_extra['nickname']
-                            if not existing_extra.get('follower_count') and new_extra.get('follower_count'):
-                                if not existing.get('extra'):
-                                    existing['extra'] = {}
-                                existing['extra']['follower_count'] = new_extra['follower_count']
-                    except:
-                        pass
-                # 保留最新的 last_seen
                 if (row.get('last_seen') or 0) > (existing.get('last_seen') or 0):
                     existing['last_seen'] = row['last_seen']
         
-        # === 跨房间信息合并：用其他房间更好的 real_name / extra 补充 ===
-        for su, cb in cross_better.items():
-            if su not in merged:
-                continue
-            existing = merged[su]
-            # 合并 real_name
-            cb_rn = cb.get('real_name', '') or ''
-            if cb_rn:
-                ex_rn = existing.get('real_name', '') or ''
-                if (not ex_rn) or (ex_rn.startswith('dou') or ex_rn.startswith('神秘人')):
-                    existing['real_name'] = cb_rn
-            # 合并 extra
-            cb_extra = cb.get('extra', {}) or {}
-            if cb_extra:
-                ex_extra = existing.get('extra') or {}
-                if not isinstance(ex_extra, dict):
-                    ex_extra = {}
-                new_extra = dict(ex_extra)
-                changed = False
-                for fld in ('unique_id', 'nickname', 'follower_count'):
-                    if not new_extra.get(fld) and cb_extra.get(fld):
-                        new_extra[fld] = cb_extra[fld]
-                        changed = True
-                if changed:
-                    existing['extra'] = new_extra
-            # 保留最新的 last_seen
-            existing['last_seen'] = max(existing.get('last_seen', 0) or 0, cb.get('last_seen', 0) or 0)
-        
         result = list(merged.values())
+        for item in result:
+            ex = item.get('extra')
+            if isinstance(ex, dict) and ex.get('room_nickname'):
+                item['room_nickname'] = ex['room_nickname']
         result.sort(key=lambda x: x.get('last_seen', 0) or 0, reverse=True)
         return result
     except Exception as e:
@@ -851,40 +833,17 @@ def start_listen():
         conn.row_factory = sqlite3.Row
         cur = conn.execute('''
             SELECT * FROM mystery_records
-            WHERE room_id = ? AND is_regular = 0
+            WHERE is_regular = 0
             ORDER BY first_seen ASC
-            LIMIT 50
-        ''', (room_id,))
-        db_records = [dict(r) for r in cur.fetchall()]
-        cross_better = {}
-        # 跨房间查询更好的 real_name/extra
-        if db_records:
-            all_sec_uids = list(set(r['sec_uid'] for r in db_records if r.get('sec_uid')))
-            placeholders = ','.join('?' * len(all_sec_uids))
-            cur_cross = conn.execute(f'''
-                SELECT sec_uid, real_name, extra
-                FROM mystery_records
-                WHERE sec_uid IN ({placeholders})
-            ''', all_sec_uids)
-            cross_better = {}
-            for cr in cur_cross.fetchall():
-                su = cr['sec_uid']
-                if su not in cross_better:
-                    cross_better[su] = {'real_name': '', 'extra': {}}
-                rn = (cr['real_name'] or '').strip()
-                if rn and not rn.startswith('dou') and not rn.startswith('神秘人'):
-                    cur_best = cross_better[su]['real_name']
-                    if not cur_best or cur_best.startswith('dou') or cur_best.startswith('神秘人'):
-                        cross_better[su]['real_name'] = rn
-                if cr['extra']:
-                    try:
-                        xe = json.loads(cr['extra']) if isinstance(cr['extra'], str) else cr['extra']
-                        if isinstance(xe, dict):
-                            for fld in ('unique_id', 'nickname', 'follower_count'):
-                                if not cross_better[su]['extra'].get(fld) and xe.get(fld):
-                                    cross_better[su]['extra'][fld] = xe[fld]
-                    except:
-                        pass
+            LIMIT 100
+        ''')
+        all_db = [dict(r) for r in cur.fetchall()]
+        # 过滤：seen_room_ids 包含当前 room_id
+        db_records = []
+        for r in all_db:
+            seen = (r.get('seen_room_ids') or '').split(',')
+            if str(room_id) in seen:
+                db_records.append(r)
         conn.close()
         
         seq = 0
@@ -896,20 +855,10 @@ def start_listen():
                     extra = json.loads(r['extra']) if isinstance(r['extra'], str) else r['extra']
                 except:
                     extra = {}
-            # 用跨房间更好的数据覆盖
-            cb = cross_better.get(r['sec_uid'], {}) if db_records else {}
-            cb_rn = (cb.get('real_name') or '').strip()
-            final_real_name = cb_rn if cb_rn else (r['real_name'] or r['display'])
-            cb_extra = cb.get('extra', {}) or {}
-            if cb_extra:
-                xe = dict(extra)
-                for fld in ('unique_id', 'nickname', 'follower_count'):
-                    if not xe.get(fld) and cb_extra.get(fld):
-                        xe[fld] = cb_extra[fld]
-                extra = xe
+            # 不再需要跨房间合并——DB 中已自然合并
             replay_info = {
                 'display': r['display'],
-                'real_name': final_real_name,
+                'real_name': r['real_name'] or r['display'],
                 'unique_id': extra.get('unique_id', ''),
                 'sec_uid': r['sec_uid'],
                 'gender': '未知',
@@ -1000,24 +949,44 @@ def history_rooms():
     try:
         conn = sqlite3.connect(_DB_PATH)
         cur = conn.execute('''
-            SELECT room_id, MAX(last_seen) as last_seen, COUNT(*) as mystery_count
+            SELECT last_room_id, seen_room_ids, last_seen, extra
             FROM mystery_records WHERE is_regular = 0
-            GROUP BY room_id ORDER BY last_seen DESC
+            ORDER BY last_seen DESC
         ''')
-        rooms = [{'room_id': r[0], 'last_seen': r[1], 'mystery_count': r[2]} for r in cur.fetchall()]
+        # 从 seen_room_ids + last_room_id 重建房间列表
+        room_map = {}  # room_id -> {last_seen, count}
+        for r in cur.fetchall():
+            last_room = r[0]
+            seen = (r[1] or '').split(',')
+            last_seen = r[2]
+            # 所有出现过的房间
+            all_rooms = set(seen)
+            if last_room:
+                all_rooms.add(last_room)
+            for rid in all_rooms:
+                if not rid:
+                    continue
+                if rid not in room_map:
+                    room_map[rid] = {'room_id': rid, 'last_seen': last_seen, 'mystery_count': 0}
+                if (last_seen or 0) > (room_map[rid]['last_seen'] or 0):
+                    room_map[rid]['last_seen'] = last_seen
+                room_map[rid]['mystery_count'] += 1
         conn.close()
-        # 补上房间昵称（从数据库 extra 提取）
+        rooms = sorted(room_map.values(), key=lambda x: x['last_seen'] or 0, reverse=True)
+        # 补上房间昵称
         for r in rooms:
             listener = listeners.get(r['room_id'])
             if listener and listener.nickname:
                 r['nickname'] = listener.nickname
             else:
                 r['short_id'] = r['room_id'][:8]
-            # 尝试从数据库里已有的 extra 恢复房间昵称
-            conn2 = sqlite3.connect(_DB_PATH)
-            cur2 = conn2.execute("SELECT extra FROM mystery_records WHERE room_id=? AND extra LIKE '%room_nickname%' LIMIT 1", (r['room_id'],))
+        # 从数据库恢复房间昵称
+        conn2 = sqlite3.connect(_DB_PATH)
+        for r in rooms:
+            cur2 = conn2.execute(
+                "SELECT extra FROM mystery_records WHERE seen_room_ids LIKE ? AND extra LIKE '%room_nickname%' LIMIT 1",
+                ('%' + r['room_id'] + '%',))
             row2 = cur2.fetchone()
-            conn2.close()
             if row2:
                 try:
                     ex = json.loads(row2[0])
@@ -1025,6 +994,7 @@ def history_rooms():
                         r['nickname'] = ex['room_nickname']
                 except:
                     pass
+        conn2.close()
         return jsonify({'success': True, 'rooms': rooms})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
@@ -1086,22 +1056,21 @@ def history_all():
                 latest_d['is_current'] = False
             new_displays.append(latest_d)
         
-        # 其他：仅供参考
-        if other:
-            other.sort(key=lambda x: x.get('last_seen', 0))
-            latest_o = other[-1]
-            latest_o['is_current'] = False
-            new_displays.append(latest_o)
-        
+        # 其他：不显示（用户只要神秘人和dou两种）
+
         if new_displays:
             new_displays.sort(key=lambda x: x.get('last_seen', 0))
-            item['display'] = new_displays[-1]['display']
             item['displays'] = new_displays
             item['is_current'] = any(d.get('is_current') for d in new_displays)
             # 如果 extra 里有真实昵称，用它覆盖
             extra_nickname = (item.get('extra') or {}).get('nickname')
             if extra_nickname and extra_nickname != item.get('real_name'):
                 item['real_name'] = extra_nickname
+            # 从 extra 提取房间昵称
+            extra_rn = (item.get('extra') or {}).get('room_nickname')
+            if extra_rn:
+                item['room_nickname'] = extra_rn
+                item['nickname'] = extra_rn
         else:
             item['displays'] = []
             item['is_current'] = False
@@ -1110,31 +1079,50 @@ def history_all():
 
 @app.route('/api/history_all_all')
 def history_all_all():
-    """返回所有直播间的历史神秘人记录，不分房间，合并后按最后出现时间排序"""
+    """返回所有直播间的历史神秘人记录，不分房间"""
     try:
         conn = sqlite3.connect(_DB_PATH)
+        conn.row_factory = sqlite3.Row
+        
         cur = conn.execute('''
-            SELECT DISTINCT room_id FROM mystery_records WHERE is_regular = 0
+            SELECT r.*
+            FROM mystery_records r
+            WHERE r.is_regular = 0
+            ORDER BY r.last_seen DESC
+            LIMIT 500
         ''')
-        room_ids = [r[0] for r in cur.fetchall()]
+        all_records = [dict(r) for r in cur.fetchall()]
+        
+        # 拉取 display_names
+        cur2 = conn.execute('''
+            SELECT sec_uid, display, last_seen, seen_count
+            FROM display_names
+            ORDER BY last_seen DESC
+        ''')
+        dn_rows = [dict(r) for r in cur2.fetchall()]
         conn.close()
         
-        # 每个房间的跨房间合并（_load_room_history 已做跨房间合并）
-        all_records = []
-        seen_keys = set()
-        for rid in room_ids:
-            records = _load_room_history(rid)
-            for rec in records:
-                key = rec.get('sec_uid', '') or rec.get('display', '')
-                if key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                all_records.append(rec)
+        display_map = {}
+        for d in dn_rows:
+            su = d['sec_uid']
+            if su not in display_map:
+                display_map[su] = []
+            display_map[su].append({
+                'display': d['display'],
+                'last_seen': d['last_seen'],
+                'seen_count': d['seen_count']
+            })
         
-        # 按 last_seen 倒序
-        all_records.sort(key=lambda x: x.get('last_seen', 0) or 0, reverse=True)
+        for item in all_records:
+            su = item.get('sec_uid', '') or ''
+            if item.get('extra'):
+                try:
+                    item['extra'] = json.loads(item['extra'])
+                except:
+                    item['extra'] = {}
+            item['displays'] = sorted(display_map.get(su, []), key=lambda x: x['last_seen'], reverse=True)
         
-        # 标记马甲状态（复用 history_all 的标记逻辑）
+        # 标记马甲状态
         from datetime import datetime, timezone, timedelta
         beijing_tz = timezone(timedelta(hours=8))
         beijing_now = datetime.now(beijing_tz)
@@ -1146,7 +1134,6 @@ def history_all_all():
         for item in all_records:
             displays = item.get('displays', []) or []
             if not displays:
-                # display_names 为空时，用 item 自身的 display 虚拟一个（跨房间合并后的 last_seen 已是最新）
                 item_display = item.get('display', '') or ''
                 if item_display:
                     displays = [{'display': item_display, 'last_seen': item.get('last_seen', 0)}]
@@ -1155,7 +1142,6 @@ def history_all_all():
                     continue
             mystery = [d for d in displays if d.get('display','').startswith('神秘人')]
             dou = [d for d in displays if d.get('display','').startswith('dou')]
-            other = [d for d in displays if not d.get('display','').startswith('神秘人') and not d.get('display','').startswith('dou')]
             new_displays = []
             if mystery:
                 mystery.sort(key=lambda x: x.get('last_seen', 0))
@@ -1169,14 +1155,7 @@ def history_all_all():
                 today_d = [d for d in dou if d.get('last_seen', 0) >= midnight_ts]
                 latest_d['is_current'] = len(today_d) >= 2
                 new_displays.append(latest_d)
-            if other:
-                other.sort(key=lambda x: x.get('last_seen', 0))
-                latest_o = other[-1]
-                latest_o['is_current'] = False
-                new_displays.append(latest_o)
             if new_displays:
-                new_displays.sort(key=lambda x: x.get('last_seen', 0))
-                item['display'] = new_displays[-1]['display']
                 item['displays'] = new_displays
                 item['is_current'] = any(d.get('is_current') for d in new_displays)
                 extra_nickname = (item.get('extra') or {}).get('nickname')
@@ -1205,32 +1184,29 @@ def all_records(room_id):
     try:
         conn = sqlite3.connect(_DB_PATH)
         conn.row_factory = sqlite3.Row
-        if hours > 0:
-            cutoff = int(time.time()) - hours * 3600
-            cur = conn.execute('''
-                SELECT r.*, 
-                       GROUP_CONCAT(d.display || ':' || d.last_seen, '|') as all_displays
-                FROM mystery_records r
-                LEFT JOIN display_names d ON d.room_id = r.room_id AND d.sec_uid = r.sec_uid
-                WHERE r.room_id = ? AND r.last_seen >= ?
-                GROUP BY r.sec_uid, r.display
-                ORDER BY r.last_seen DESC
-                LIMIT 500
-            ''', (room_id, cutoff))
-        else:
-            cur = conn.execute('''
-                SELECT r.*, 
-                       GROUP_CONCAT(d.display || ':' || d.last_seen, '|') as all_displays
-                FROM mystery_records r
-                LEFT JOIN display_names d ON d.room_id = r.room_id AND d.sec_uid = r.sec_uid
-                WHERE r.room_id = ?
-                GROUP BY r.sec_uid, r.display
-                ORDER BY r.last_seen DESC
-                LIMIT 500
-            ''', (room_id,))
+        
+        # 查全表，Python 侧按 seen_room_ids 过滤 + 时间过滤
+        cur = conn.execute('''
+            SELECT r.*, 
+                   GROUP_CONCAT(d.display || ':' || d.last_seen, '|') as all_displays
+            FROM mystery_records r
+            LEFT JOIN display_names d ON d.sec_uid = r.sec_uid
+            GROUP BY r.sec_uid, r.display
+            ORDER BY r.last_seen DESC
+            LIMIT 500
+        ''')
+        
         rows = []
+        cutoff = int(time.time()) - hours * 3600 if hours > 0 else 0
         for r in cur.fetchall():
             row = dict(r)
+            # 过滤：seen_room_ids 包含 room_id
+            seen = (row.get('seen_room_ids') or '').split(',')
+            if str(room_id) not in seen:
+                continue
+            # 时间过滤
+            if cutoff and (row.get('last_seen') or 0) < cutoff:
+                continue
             if row.get('all_displays'):
                 names = []
                 for entry in row['all_displays'].split('|'):
@@ -1245,76 +1221,27 @@ def all_records(room_id):
                     row['extra'] = json.loads(row['extra'])
                 except:
                     row['extra'] = {}
+            # 兼容前端：room_id 从 last_room_id 映射
+            row['room_id'] = row.get('last_room_id', '')
+            # 从 extra 提取 room_nickname
+            row['room_nickname'] = (row.get('extra') or {}).get('room_nickname', '')
             rows.append(row)
-        # === 跨房间查询：收集当前所有 sec_uid 在其他房间的更好信息 ===
-        cross_better = {}  # sec_uid -> {real_name, extra}
-        all_sec_uids = list(set(r.get('sec_uid', '') for r in rows if r.get('sec_uid')))
-        if all_sec_uids:
-            placeholders = ','.join('?' * len(all_sec_uids))
-            cur_cross = conn.execute(f'''
-                SELECT sec_uid, real_name, extra, nickname, last_seen
-                FROM mystery_records
-                WHERE sec_uid IN ({placeholders})
-            ''', all_sec_uids)
-            for cr in cur_cross.fetchall():
-                su = cr['sec_uid']
-                if su not in cross_better:
-                    cross_better[su] = {'real_name': '', 'extra': {}, 'nickname': '', 'last_seen': 0}
-                cb = cross_better[su]
-                rn = (cr['real_name'] or '').strip()
-                if rn and not rn.startswith('dou') and not rn.startswith('神秘人'):
-                    cur_best = cb['real_name']
-                    if not cur_best or cur_best.startswith('dou') or cur_best.startswith('神秘人'):
-                        cb['real_name'] = rn
-                if cr['extra']:
-                    try:
-                        xe = json.loads(cr['extra']) if isinstance(cr['extra'], str) else cr['extra']
-                        if isinstance(xe, dict):
-                            for fld in ('unique_id', 'nickname', 'follower_count'):
-                                if not cb['extra'].get(fld) and xe.get(fld):
-                                    cb['extra'][fld] = xe[fld]
-                    except:
-                        pass
-                cb['last_seen'] = max(cb['last_seen'], cr['last_seen'] or 0)
         conn.close()
-        # 按 sec_uid 去重，优先保留有真实昵称的记录
-        seen = {}
-        deduped = []
+        
+        # 按 sec_uid 去重（DB 已自然合并，这里只是兜底）
+        seen_keys = {}
         for row in rows:
             key = row.get('sec_uid', '') or row.get('display', '')
-            if key not in seen:
-                seen[key] = row
-            else:
-                existing = seen[key]
-                existing_rn = existing.get('real_name', '')
-                new_rn = row.get('real_name', '')
-                # 如果新记录有真实昵称而旧的没有，用新的
-                if new_rn and not new_rn.startswith('dou') and not new_rn.startswith('神秘人'):
-                    if existing_rn.startswith('dou') or existing_rn.startswith('神秘人') or not existing_rn:
-                        # 保留新记录的 real_name 和 extra，但保留旧的 last_seen 作为排序依据
-                        old_ts = existing.get('last_seen', 0)
-                        for k in ['real_name', 'extra', 'nickname', 'room_nickname']:
-                            if k in row:
-                                existing[k] = row[k]
-                        if row.get('extra'):
-                            try:
-                                new_extra = json.loads(row['extra']) if isinstance(row['extra'], str) else row['extra']
-                                if new_extra.get('unique_id') or new_extra.get('nickname'):
-                                    existing_extra = existing.get('extra') or {}
-                                    for ek in ['unique_id', 'nickname', 'follower_count', 'ip_location', 'signature', 'aweme_count']:
-                                        if not existing_extra.get(ek) and new_extra.get(ek):
-                                            existing_extra[ek] = new_extra[ek]
-                                    existing['extra'] = existing_extra
-                            except:
-                                pass
-                        existing['last_seen'] = max(old_ts, row.get('last_seen', 0) or 0)
-                elif (row.get('last_seen', 0) or 0) > (existing.get('last_seen', 0) or 0):
-                    existing['last_seen'] = row['last_seen']
-        # 每种类型只保留最新的display，不同类型都保留
-        for row in seen.values():
+            if key not in seen_keys:
+                seen_keys[key] = row
+            elif (row.get('last_seen') or 0) > (seen_keys[key].get('last_seen') or 0):
+                seen_keys[key] = row
+        
+        # 每种 display 类型只保留最新的，不同类型都保留
+        deduped = []
+        for row in seen_keys.values():
             names = row.get('displays', [])
             if names:
-                # 按类型分组，每种只留最新一个
                 mystery = [n for n in names if n.get('display','').startswith('神秘人')]
                 dou = [n for n in names if n.get('display','').startswith('dou')]
                 other = [n for n in names if not n.get('display','').startswith('神秘人') and not n.get('display','').startswith('dou')]
@@ -1327,30 +1254,6 @@ def all_records(room_id):
                 row['display'] = filtered[-1]['display']
                 row['displays'] = filtered
             deduped.append(row)
-        # === 跨房间信息合并：用其他房间更好的 real_name / extra 补充 ===
-        for su, cb in cross_better.items():
-            for row in deduped:
-                if row.get('sec_uid') != su:
-                    continue
-                cb_rn = cb.get('real_name', '') or ''
-                if cb_rn:
-                    ex_rn = row.get('real_name', '') or ''
-                    if (not ex_rn) or (ex_rn.startswith('dou') or ex_rn.startswith('神秘人')):
-                        row['real_name'] = cb_rn
-                cb_extra = cb.get('extra', {}) or {}
-                if cb_extra:
-                    ex_extra = row.get('extra') or {}
-                    if not isinstance(ex_extra, dict):
-                        ex_extra = {}
-                    new_extra = dict(ex_extra)
-                    changed = False
-                    for fld in ('unique_id', 'nickname', 'follower_count'):
-                        if not new_extra.get(fld) and cb_extra.get(fld):
-                            new_extra[fld] = cb_extra[fld]
-                            changed = True
-                    if changed:
-                        row['extra'] = new_extra
-                row['last_seen'] = max(row.get('last_seen', 0) or 0, cb.get('last_seen', 0) or 0)
         deduped.sort(key=lambda x: x.get('last_seen', 0) or 0, reverse=True)
         return jsonify({'success': True, 'records': deduped})
     except Exception as e:
@@ -1470,8 +1373,8 @@ h1{font-size:26px;text-align:center;padding:12px 0 8px;background:linear-gradien
 .event.regular{background:rgba(142,142,147,.06);border-left:3px solid #8e8e93}
 .event.regular .tag.reg{background:rgba(142,142,147,.25);color:#8e8e93}
 /* 名字截断 + 点击展开 */
-.name-box{display:flex;align-items:center;gap:4px;margin:2px 0;min-width:0}
-.name-text{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;flex:1;min-width:0;padding:1px 0}
+.name-box{margin:2px 0;min-width:0;overflow:hidden}
+.name-text{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;display:block;padding:1px 0;width:100%}
 .name-text.exp{white-space:normal;overflow:visible}
 .name-text.mn{color:#fe2c55}
 .name-text.rn{color:#999}
@@ -1483,7 +1386,7 @@ h1{font-size:26px;text-align:center;padding:12px 0 8px;background:linear-gradien
 .events:empty,.events:has(.empty){display:block}
 .events::-webkit-scrollbar{width:4px}
 .events::-webkit-scrollbar-thumb{background:#333;border-radius:2px}
-.event{padding:7px 9px;border-radius:8px;font-size:12px;line-height:1.4;min-height:108px;background:rgba(26,26,26,0.7);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.event{padding:7px 9px;border-radius:8px;font-size:12px;line-height:1.4;min-height:108px;min-width:0;background:rgba(26,26,26,0.7);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
 .event.exp{height:auto;min-height:108px}
 </style>
   <script src="/static/anime.min.js"></script>
@@ -2383,7 +2286,7 @@ function renderAllCards(users, container, roomColors, roomMap) {
       html += `<div></div>`
     }
     html += `</div>`
-    html += '<div class="name-box"><span class="name-text ' + (isMystery?'mn':'rn') + '">' + escapeHtml(u.real_name || u.display || '?') + (u.display && u.display !== (u.real_name||u.display) ? '<span class="dp">' + escapeHtml(u.display) + '</span>' : '') + '</span></div>'
+    html += '<div class="name-box"><span class="name-text ' + (isMystery?'mn':'rn') + '" onclick="toggleName(' + "'" + uid + "'" + ')">' + escapeHtml(u.real_name || u.display || '?') + (u.display && u.display !== (u.real_name||u.display) ? '<span class="dp">' + escapeHtml(u.display) + '</span>' : '') + '</span></div>'
     // 显示别名
     if (u.aliasDisplays && u.aliasDisplays.length > 0) {
       html += '<div style="font-size:10px;color:#888;margin:1px 0">' + u.aliasDisplays.map(function(a){ return '<span style="color:#666">⏳ ' + escapeHtml(a) + '</span>' }).join(' ') + '</div>'
