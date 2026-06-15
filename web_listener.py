@@ -26,12 +26,12 @@ _TTWID = cu.dy_live_auth.cookie.get('ttwid', '')
 _user_info_cache = {}
 _level_cache = {}
 _last_api_call = 0  # 限流时间戳
-_record_all_enabled = False  # 全局录制开关：True=记录所有用户，False=仅记录神秘人
+_record_all_enabled = True  # 全局录制开关：True=记录所有用户，False=仅记录神秘人（默认开启，监听即记录）
 _private_name_cache = {}  # (room_id:display) -> real_nickname, 私密直播间送礼拿到真实名后缓存
 
 # ========== SQLite 持久化 ==========
 import sqlite3
-_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mystery_history.db')
+_DB_PATH = '/home/admin/douyin-mystery-hunter/mystery_history.db'
 
 def _init_db():
     conn = sqlite3.connect(_DB_PATH)
@@ -151,38 +151,81 @@ def _save_interaction(room_id, sec_uid, display, i_type, content='', gift_count=
         print(f"[DB] interaction save error: {e}", flush=True)
 
 def _load_room_history(room_id):
-    """加载某个直播间所有历史记录（仅神秘人）"""
+    """加载某个直播间所有历史记录（仅神秘人），Python 合并去重"""
     try:
         conn = sqlite3.connect(_DB_PATH)
         conn.row_factory = sqlite3.Row
+        # 拿全部记录，不 GROUP BY
         cur = conn.execute('''
-            SELECT r.*, GROUP_CONCAT(d.display || ':' || d.last_seen || ':' || d.seen_count, '|') as all_displays
-            FROM mystery_records r
-            LEFT JOIN display_names d ON d.room_id = r.room_id AND d.sec_uid = r.sec_uid
-            WHERE r.room_id = ? AND r.is_regular = 0
-            GROUP BY r.sec_uid
-            ORDER BY r.last_seen DESC
+            SELECT * FROM mystery_records
+            WHERE room_id = ? AND is_regular = 0
+            ORDER BY last_seen DESC
         ''', (room_id,))
         rows = [dict(r) for r in cur.fetchall()]
+        # 拿该直播间所有 display_names
+        cur2 = conn.execute('''
+            SELECT sec_uid, display, last_seen, seen_count
+            FROM display_names
+            WHERE room_id = ?
+        ''', (room_id,))
+        dn_rows = cur2.fetchall()
         conn.close()
-        # 解析 all_displays 为数组（格式：display:last_seen:seen_count）
+        
+        # 按 sec_uid 分组，合并最佳数据
+        display_map = {}  # sec_uid -> [{display, last_seen, seen_count}]
+        for d in dn_rows:
+            key = d['sec_uid']
+            if key not in display_map:
+                display_map[key] = []
+            display_map[key].append({'display': d['display'], 'last_seen': d['last_seen'], 'seen_count': d['seen_count']})
+        
+        merged = {}  # sec_uid -> merged row
         for row in rows:
-            if row.get('all_displays'):
-                names = []
-                for entry in row['all_displays'].split('|'):
-                    parts = entry.rsplit(':', 2)
-                    if len(parts) == 3:
-                        names.append({'display': parts[0], 'last_seen': int(parts[1]), 'seen_count': int(parts[2])})
-                row['displays'] = sorted(names, key=lambda x: x['last_seen'], reverse=True)
+            key = row['sec_uid']
+            if key not in merged:
+                row['displays'] = sorted(display_map.get(key, []), key=lambda x: x['last_seen'], reverse=True)
+                if row.get('extra'):
+                    try:
+                        row['extra'] = json.loads(row['extra'])
+                    except:
+                        row['extra'] = {}
+                row['is_current'] = False
+                merged[key] = row
             else:
-                row['displays'] = []
-            if row.get('extra'):
-                try:
-                    row['extra'] = json.loads(row['extra'])
-                except:
-                    row['extra'] = {}
-            row['is_current'] = False  # 前端根据当前会话标记
-        return rows
+                existing = merged[key]
+                # 保留更好的 real_name（非机器名优先）
+                existing_rn = existing.get('real_name', '')
+                new_rn = row.get('real_name', '')
+                if new_rn and not new_rn.startswith('dou') and not new_rn.startswith('神秘人'):
+                    if existing_rn.startswith('dou') or existing_rn.startswith('神秘人') or not existing_rn:
+                        existing['real_name'] = new_rn
+                # 保留更好的 extra（有 unique_id 和 nickname 优先）
+                if row.get('extra'):
+                    try:
+                        new_extra = json.loads(row['extra']) if isinstance(row['extra'], str) else row['extra']
+                        if new_extra.get('unique_id') or new_extra.get('nickname'):
+                            existing_extra = existing.get('extra') or {}
+                            if not existing_extra.get('unique_id') and new_extra.get('unique_id'):
+                                if not existing.get('extra'):
+                                    existing['extra'] = {}
+                                existing['extra']['unique_id'] = new_extra['unique_id']
+                            if not existing_extra.get('nickname') and new_extra.get('nickname'):
+                                if not existing.get('extra'):
+                                    existing['extra'] = {}
+                                existing['extra']['nickname'] = new_extra['nickname']
+                            if not existing_extra.get('follower_count') and new_extra.get('follower_count'):
+                                if not existing.get('extra'):
+                                    existing['extra'] = {}
+                                existing['extra']['follower_count'] = new_extra['follower_count']
+                    except:
+                        pass
+                # 保留最新的 last_seen
+                if (row.get('last_seen') or 0) > (existing.get('last_seen') or 0):
+                    existing['last_seen'] = row['last_seen']
+        
+        result = list(merged.values())
+        result.sort(key=lambda x: x.get('last_seen', 0) or 0, reverse=True)
+        return result
     except Exception as e:
         print(f"[DB] load error: {e}", flush=True)
         return []
@@ -337,6 +380,7 @@ class RoomListener:
         self.mystery_count = 0
         self.recent_mysteries = []
         self._mystery_seq = 0
+        self.is_private = False  # 是否为隐私直播间（sec_uid 为空即匿名模式）
         self.last_msg_time = time.time()  # 最后收到消息的时间，用于下播检测
 
     def start(self):
@@ -445,6 +489,7 @@ class RoomListener:
                                 # 私密直播间：先查缓存（不管是不是神秘人，只要sec_uid为空就查）
                                 extra = None
                                 if not user.sec_uid:
+                                    self.is_private = True
                                     cached = _private_name_cache.get(f"{self.room_id}:{display}")
                                     if cached:
                                         print(f"[CACHE] 缓存命中: {display} -> {cached.get('nickname','?')}", flush=True)
@@ -567,9 +612,9 @@ class RoomListener:
                                     msg.ParseFromString(item.payload)
                                     user = msg.user
                                     is_mystery, display, real_name, mm = is_real_mystery_user(user)
-                                    # 私密直播间：有sec_uid就查API缓存真实名
+                                    # 仅隐私直播间：送礼时查 API 获取真实名
                                     extra = None
-                                    if user.sec_uid:
+                                    if self.is_private and user.sec_uid:
                                         extra = lookup_user(user.sec_uid)
                                         if extra and extra.get('nickname'):
                                             print(f"[CACHE] 缓存写入: room={self.room_id} display={display} -> {extra.get('nickname','?')}", flush=True)
@@ -745,6 +790,8 @@ def stop_listen():
     """停止指定监听"""
     data = request.get_json()
     room_id = data.get('room_id', '')
+    ua = request.headers.get('User-Agent', 'unknown')
+    print(f"[操作] 停止监听 room={room_id} | UA: {ua[:120]}", flush=True)
     if room_id in listeners:
         listeners[room_id].stop()
         del listeners[room_id]
@@ -754,6 +801,8 @@ def stop_listen():
 @app.route('/api/stop_all', methods=['POST'])
 def stop_all():
     """停止所有监听"""
+    ua = request.headers.get('User-Agent', 'unknown')
+    print(f"[操作] 停止全部监听 | UA: {ua[:120]}", flush=True)
     for rid, listener in list(listeners.items()):
         listener.stop()
     listeners.clear()
@@ -839,69 +888,75 @@ def history_all():
     if not room_id:
         return jsonify({'success': False, 'error': '缺少room_id'})
     from datetime import datetime, timezone, timedelta
+    # 北京时间
+    beijing_tz = timezone(timedelta(hours=8))
+    beijing_now = datetime.now(beijing_tz)
     # 计算凌晨3点截止线：如果现在>=今天3点，用今天3点；否则用昨天3点
-    now = datetime.now(timezone.utc) + timedelta(hours=8)  # 北京时间
-    today_3am = now.replace(hour=3, minute=0, second=0, microsecond=0)
-    if now >= today_3am:
+    today_3am = beijing_now.replace(hour=3, minute=0, second=0, microsecond=0)
+    if beijing_now >= today_3am:
         cutoff = today_3am
     else:
         cutoff = today_3am - timedelta(days=1)
     cutoff_ts = int(cutoff.timestamp())
     # dou 马甲按当天午夜判断
-    today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_midnight = beijing_now.replace(hour=0, minute=0, second=0, microsecond=0)
     midnight_ts = int(today_midnight.timestamp())
     
     history = _load_room_history(room_id)
-    # 标记马甲状态（规则：神秘人当天凌晨3点前稳定；dou最后一个有效）
+    # 标记马甲状态：同类替换（dou只留最新dou，神秘人只留最新神秘人），不同类型都保留
     for item in history:
         displays = item.get('displays', []) or []
+        if not displays:
+            continue
+        
         # 按类型分组
-        mystery_displays = [d for d in displays if d.get('display','').startswith('神秘人')]
-        dou_displays = [d for d in displays if d.get('display','').startswith('dou')]
-        other_displays = [d for d in displays if not d.get('display','').startswith('神秘人') and not d.get('display','').startswith('dou')]
+        mystery = [d for d in displays if d.get('display','').startswith('神秘人')]
+        dou = [d for d in displays if d.get('display','').startswith('dou')]
+        other = [d for d in displays if not d.get('display','').startswith('神秘人') and not d.get('display','').startswith('dou')]
         
         new_displays = []
         
-        # 1) 神秘人：当天凌晨3点前抓到的，取最后一个(最新的)为✅
-        today_mystery = [d for d in mystery_displays if d.get('last_seen', 0) >= cutoff_ts]
-        if today_mystery:
-            # 按时间排序取最新的
-            today_mystery.sort(key=lambda x: x.get('last_seen', 0))
-            latest = today_mystery[-1]
-            latest['is_current'] = True
-            new_displays.append(latest)
-            # 旧的不显示（覆盖）
+        # 神秘人：今天3点后出现过 → 有效✅，否则已失效
+        if mystery:
+            mystery.sort(key=lambda x: x.get('last_seen', 0))
+            latest_m = mystery[-1]
+            today_m = [d for d in mystery if d.get('last_seen', 0) >= cutoff_ts]
+            if today_m:
+                latest_m['is_current'] = True
+            else:
+                latest_m['is_current'] = False
+            new_displays.append(latest_m)
+        
+        # dou：当天午夜后有2+不同 → 最新稳定✅，否则仅供参考
+        if dou:
+            dou.sort(key=lambda x: x.get('last_seen', 0))
+            today_d = [d for d in dou if d.get('last_seen', 0) >= midnight_ts]
+            latest_d = dou[-1]
+            if len(today_d) >= 2:
+                latest_d['is_current'] = True
+            else:
+                latest_d['is_current'] = False
+            new_displays.append(latest_d)
+        
+        # 其他：仅供参考
+        if other:
+            other.sort(key=lambda x: x.get('last_seen', 0))
+            latest_o = other[-1]
+            latest_o['is_current'] = False
+            new_displays.append(latest_o)
+        
+        if new_displays:
+            new_displays.sort(key=lambda x: x.get('last_seen', 0))
+            item['display'] = new_displays[-1]['display']
+            item['displays'] = new_displays
+            item['is_current'] = any(d.get('is_current') for d in new_displays)
+            # 如果 extra 里有真实昵称，用它覆盖
+            extra_nickname = (item.get('extra') or {}).get('nickname')
+            if extra_nickname and extra_nickname != item.get('real_name'):
+                item['real_name'] = extra_nickname
         else:
-            # 今天的没有，历史的有→⏳
-            for d in mystery_displays:
-                d['is_current'] = False
-                new_displays.append(d)
-        
-        # 2) dou：当天午夜后，看有几个不同dou
-        today_dou = [d for d in dou_displays if d.get('last_seen', 0) >= midnight_ts]
-        if len(today_dou) >= 2:
-            # 多个不同dou→最后一个✅稳定，之前的覆盖
-            today_dou.sort(key=lambda x: x.get('last_seen', 0))
-            latest = today_dou[-1]
-            latest['is_current'] = True
-            new_displays.append(latest)
-        elif len(today_dou) == 1:
-            # 只有一个dou→⏳仅供参考
-            today_dou[0]['is_current'] = False
-            new_displays.append(today_dou[0])
-        else:
-            # 今天的没有dou→历史的全部⏳
-            for d in dou_displays:
-                d['is_current'] = False
-                new_displays.append(d)
-        
-        # 3) 其他历史马甲
-        for d in other_displays:
-            d['is_current'] = False
-            new_displays.append(d)
-        
-        item['displays'] = new_displays
-        item['is_current'] = any(d.get('is_current') for d in new_displays)
+            item['displays'] = []
+            item['is_current'] = False
     return jsonify({'success': True, 'records': history, 'count': len(history)})
 
 @app.route('/api/history/<room_id>')
@@ -916,7 +971,7 @@ def history(room_id):
 @app.route('/api/all_records/<room_id>')
 def all_records(room_id):
     """获取全部用户记录（从 SQLite 读取，已聚合）"""
-    hours = request.args.get('hours', default=2, type=int)
+    hours = request.args.get('hours', default=0, type=int)
     try:
         conn = sqlite3.connect(_DB_PATH)
         conn.row_factory = sqlite3.Row
@@ -962,7 +1017,58 @@ def all_records(room_id):
                     row['extra'] = {}
             rows.append(row)
         conn.close()
-        return jsonify({'success': True, 'records': rows})
+        # 按 sec_uid 去重，优先保留有真实昵称的记录
+        seen = {}
+        deduped = []
+        for row in rows:
+            key = row.get('sec_uid', '') or row.get('display', '')
+            if key not in seen:
+                seen[key] = row
+            else:
+                existing = seen[key]
+                existing_rn = existing.get('real_name', '')
+                new_rn = row.get('real_name', '')
+                # 如果新记录有真实昵称而旧的没有，用新的
+                if new_rn and not new_rn.startswith('dou') and not new_rn.startswith('神秘人'):
+                    if existing_rn.startswith('dou') or existing_rn.startswith('神秘人') or not existing_rn:
+                        # 保留新记录的 real_name 和 extra，但保留旧的 last_seen 作为排序依据
+                        old_ts = existing.get('last_seen', 0)
+                        for k in ['real_name', 'extra', 'nickname', 'room_nickname']:
+                            if k in row:
+                                existing[k] = row[k]
+                        if row.get('extra'):
+                            try:
+                                new_extra = json.loads(row['extra']) if isinstance(row['extra'], str) else row['extra']
+                                if new_extra.get('unique_id') or new_extra.get('nickname'):
+                                    existing_extra = existing.get('extra') or {}
+                                    for ek in ['unique_id', 'nickname', 'follower_count', 'ip_location', 'signature', 'aweme_count']:
+                                        if not existing_extra.get(ek) and new_extra.get(ek):
+                                            existing_extra[ek] = new_extra[ek]
+                                    existing['extra'] = existing_extra
+                            except:
+                                pass
+                        existing['last_seen'] = max(old_ts, row.get('last_seen', 0) or 0)
+                elif (row.get('last_seen', 0) or 0) > (existing.get('last_seen', 0) or 0):
+                    existing['last_seen'] = row['last_seen']
+        # 每种类型只保留最新的display，不同类型都保留
+        for row in seen.values():
+            names = row.get('displays', [])
+            if names:
+                # 按类型分组，每种只留最新一个
+                mystery = [n for n in names if n.get('display','').startswith('神秘人')]
+                dou = [n for n in names if n.get('display','').startswith('dou')]
+                other = [n for n in names if not n.get('display','').startswith('神秘人') and not n.get('display','').startswith('dou')]
+                filtered = []
+                for group in [mystery, dou, other]:
+                    if group:
+                        group.sort(key=lambda x: x.get('last_seen', 0))
+                        filtered.append(group[-1])
+                filtered.sort(key=lambda x: x.get('last_seen', 0))
+                row['display'] = filtered[-1]['display']
+                row['displays'] = filtered
+            deduped.append(row)
+        deduped.sort(key=lambda x: x.get('last_seen', 0) or 0, reverse=True)
+        return jsonify({'success': True, 'records': deduped})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e), 'fallback': True})
 
@@ -1093,7 +1199,7 @@ h1{font-size:26px;text-align:center;padding:12px 0 8px;background:linear-gradien
 .events:empty,.events:has(.empty){display:block}
 .events::-webkit-scrollbar{width:4px}
 .events::-webkit-scrollbar-thumb{background:#333;border-radius:2px}
-.event{padding:7px 9px;border-radius:8px;font-size:12px;line-height:1.4;overflow:hidden;height:108px;min-height:108px;background:rgba(26,26,26,0.7);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.event{padding:7px 9px;border-radius:8px;font-size:12px;line-height:1.4;min-height:108px;background:rgba(26,26,26,0.7);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
 .event.exp{height:auto;min-height:108px}
 </style>
   <script src="/static/anime.min.js"></script>
@@ -1784,6 +1890,25 @@ function fetchHistoryForRoom(roomId) {
       })
     })
 
+    // 合并完成后，每个用户每种 display 类型只留最新的一个
+    Object.values(merged).forEach(item => {
+      const displays = item.displays || []
+      if (displays.length <= 1) return
+      const mystery = displays.filter(d => d.display.startsWith('神秘人'))
+      const dou = displays.filter(d => d.display.startsWith('dou'))
+      const other = displays.filter(d => !d.display.startsWith('神秘人') && !d.display.startsWith('dou'))
+      const filtered = []
+      for (const group of [mystery, dou, other]) {
+        if (group.length) {
+          group.sort((a, b) => (a.last_seen || 0) - (b.last_seen || 0))
+          filtered.push(group[group.length - 1])
+        }
+      }
+      filtered.sort((a, b) => (a.last_seen || 0) - (b.last_seen || 0))
+      item.display = filtered[filtered.length - 1].display
+      item.displays = filtered
+    })
+
     const records = Object.values(merged).sort((a, b) => (b.last_seen || 0) - (a.last_seen || 0))
 
     if (records.length === 0) {
@@ -1794,7 +1919,7 @@ function fetchHistoryForRoom(roomId) {
     // 统计 - 简洁版
     let html = tabsHtml
     html += '<div style="text-align:right;margin-bottom:10px">'
-    html += '<span style="display:inline-flex;align-items:center;gap:8px;font-size:10px;color:#888;padding:4px 10px;background:#1a1a1a;border-radius:8px"><span style="color:#34c759">✅有效</span> <span style="color:#888">⏳仅供参考</span></span>'
+    html += '<span style="display:inline-flex;align-items:center;gap:8px;font-size:10px;color:#888;padding:4px 10px;background:#1a1a1a;border-radius:8px"><span style="color:#34c759">✅有效</span> <span style="color:#888">⏳仅供参考</span> <span style="color:#ff6b35">❌已失效</span></span>'
     html += '</div>'
 
     records.forEach(item => {
@@ -1815,9 +1940,9 @@ function fetchHistoryForRoom(roomId) {
           } else if (isDou) {
             return '<span style="color:#888;font-size:11px">⏳ ' + escapeHtml(display) + ' <span style="color:#666;font-size:9px">仅供参考</span></span>'
           } else {
-            return '<span style="color:#888;font-size:11px">⏳ ' + escapeHtml(display) + '</span>'
+            return '<span style="color:#ff6b35;font-size:11px">❌ ' + escapeHtml(display) + ' <span style="color:#666;font-size:9px">已失效</span></span>'
           }
-        }).join(' &nbsp;')
+        }).join('<br>')
       }
 
       const key = item.sec_uid || item.display || '?'
@@ -1850,11 +1975,15 @@ let _allUsersCache = null  // 缓存数据，展开收起时不重复请求
 let _allShowAll = false    // 全部页是否显示所有历史
 function renderAllRecords(skipFetch) {
   const container = document.getElementById('events')
-  const roomIds = Object.keys(currentRooms)
+  let roomIds = Object.keys(currentRooms)
   if (roomIds.length === 0) {
-    container.innerHTML = '<div class="empty"><div class="icon">📋</div>暂无监听中的直播间</div>'
+    container.innerHTML = '<div class="empty"><div class="icon">📋</div>开始监听后自动显示数据</div>'
     return
   }
+  doRenderAll(roomIds, container, skipFetch)
+}
+
+function doRenderAll(roomIds, container, skipFetch) {
   const roomColors = ['#fe2c55', '#5ac8fa', '#34c759']
   const roomMap = {}; let ci = 0
   roomIds.forEach(rid => { roomMap[rid] = ci++ % 3 })
@@ -1926,6 +2055,23 @@ function renderAllRecords(skipFetch) {
           })
         }
       })
+    })
+    // 合并完成后，每个用户每种 display 类型只留最新的一个
+    users.forEach(function(u) {
+      var ads = u.aliasDisplays || []
+      if (ads.length <= 1) return
+      // 按类型分组
+      var m = [], d = [], o = []
+      ads.forEach(function(a) {
+        if (a.startsWith('神秘人')) m.push(a)
+        else if (a.startsWith('dou')) d.push(a)
+        else o.push(a)
+      })
+      var filtered = []
+      if (m.length) filtered.push(m[m.length - 1])
+      if (d.length) filtered.push(d[d.length - 1])
+      if (o.length) filtered.push(o[o.length - 1])
+      u.aliasDisplays = filtered
     })
     _allUsersCache = users.sort(function(a, b){ return b.time - a.time })
     renderAllCards(_allUsersCache, container, roomColors, roomMap)
