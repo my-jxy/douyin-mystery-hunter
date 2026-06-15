@@ -1107,6 +1107,88 @@ def history_all():
             item['is_current'] = False
     return jsonify({'success': True, 'records': history, 'count': len(history)})
 
+
+@app.route('/api/history_all_all')
+def history_all_all():
+    """返回所有直播间的历史神秘人记录，不分房间，合并后按最后出现时间排序"""
+    try:
+        conn = sqlite3.connect(_DB_PATH)
+        cur = conn.execute('''
+            SELECT DISTINCT room_id FROM mystery_records WHERE is_regular = 0
+        ''')
+        room_ids = [r[0] for r in cur.fetchall()]
+        conn.close()
+        
+        # 每个房间的跨房间合并（_load_room_history 已做跨房间合并）
+        all_records = []
+        seen_keys = set()
+        for rid in room_ids:
+            records = _load_room_history(rid)
+            for rec in records:
+                key = rec.get('sec_uid', '') or rec.get('display', '')
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                all_records.append(rec)
+        
+        # 按 last_seen 倒序
+        all_records.sort(key=lambda x: x.get('last_seen', 0) or 0, reverse=True)
+        
+        # 标记马甲状态（复用 history_all 的标记逻辑）
+        from datetime import datetime, timezone, timedelta
+        beijing_tz = timezone(timedelta(hours=8))
+        beijing_now = datetime.now(beijing_tz)
+        today_3am = beijing_now.replace(hour=3, minute=0, second=0, microsecond=0)
+        cutoff_ts = int(today_3am.timestamp()) if beijing_now >= today_3am else int((today_3am - timedelta(days=1)).timestamp())
+        today_midnight = beijing_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        midnight_ts = int(today_midnight.timestamp())
+        
+        for item in all_records:
+            displays = item.get('displays', []) or []
+            if not displays:
+                # display_names 为空时，用 item 自身的 display 虚拟一个（跨房间合并后的 last_seen 已是最新）
+                item_display = item.get('display', '') or ''
+                if item_display:
+                    displays = [{'display': item_display, 'last_seen': item.get('last_seen', 0)}]
+                    item['displays'] = displays
+                else:
+                    continue
+            mystery = [d for d in displays if d.get('display','').startswith('神秘人')]
+            dou = [d for d in displays if d.get('display','').startswith('dou')]
+            other = [d for d in displays if not d.get('display','').startswith('神秘人') and not d.get('display','').startswith('dou')]
+            new_displays = []
+            if mystery:
+                mystery.sort(key=lambda x: x.get('last_seen', 0))
+                latest_m = mystery[-1]
+                latest_m['is_current'] = (any(d.get('last_seen', 0) >= cutoff_ts for d in mystery) or
+                                            (item.get('last_seen', 0) or 0) >= cutoff_ts)
+                new_displays.append(latest_m)
+            if dou:
+                dou.sort(key=lambda x: x.get('last_seen', 0))
+                latest_d = dou[-1]
+                today_d = [d for d in dou if d.get('last_seen', 0) >= midnight_ts]
+                latest_d['is_current'] = len(today_d) >= 2
+                new_displays.append(latest_d)
+            if other:
+                other.sort(key=lambda x: x.get('last_seen', 0))
+                latest_o = other[-1]
+                latest_o['is_current'] = False
+                new_displays.append(latest_o)
+            if new_displays:
+                new_displays.sort(key=lambda x: x.get('last_seen', 0))
+                item['display'] = new_displays[-1]['display']
+                item['displays'] = new_displays
+                item['is_current'] = any(d.get('is_current') for d in new_displays)
+                extra_nickname = (item.get('extra') or {}).get('nickname')
+                if extra_nickname and extra_nickname != item.get('real_name'):
+                    item['real_name'] = extra_nickname
+            else:
+                item['displays'] = []
+        
+        return jsonify({'success': True, 'records': all_records, 'count': len(all_records)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
 @app.route('/api/history/<room_id>')
 def history(room_id):
     """获取当前监听房间的神秘人历史"""
@@ -1987,71 +2069,64 @@ function renderHistory() {
   const container = document.getElementById('events')
   container.innerHTML = '<div class="empty"><div class="icon">⏳</div>加载中...</div>'
 
-  // 先拉取有历史记录的直播间列表
-  fetch('/api/history_rooms')
+  // 直接拉取所有房间的历史记录，不分房间
+  fetch('/api/history_all_all')
     .then(r => r.json())
     .then(res => {
-      if (!res.success || !res.rooms || res.rooms.length === 0) {
+      if (!res.success || !res.records || res.records.length === 0) {
         container.innerHTML = '<div class="empty"><div class="icon">📜</div>暂无历史记录</div>'
-        _historyRoomId = null
         return
       }
 
-      // 如果当前没选中 或 选中的已不在列表里，默认第一个
-      const roomIds = res.rooms.map(r => r.room_id)
-      if (!_historyRoomId || !roomIds.includes(_historyRoomId)) {
-        _historyRoomId = roomIds[0]
-      }
+      const records = res.records
+      // 渲染选择栏（精简版）
+      let html = ''
 
-      // 合并同名房间（同一主播不同场次room_id不同）
-      const roomMap = {}
-      res.rooms.forEach(r => {
-        const key = r.nickname || r.short_id || r.room_id
-        if (!roomMap[key]) {
-          roomMap[key] = { ...r, room_ids: [r.room_id] }
-        } else {
-          // 合并：累计人数，保留最新时间
-          roomMap[key].mystery_count += r.mystery_count
-          roomMap[key].room_ids.push(r.room_id)
-          if (r.last_seen > roomMap[key].last_seen) roomMap[key].last_seen = r.last_seen
+      records.forEach(item => {
+        const extra = item.extra || {}
+        const uniqueId = extra.unique_id || item.unique_id || item.sec_uid?.slice(0, 12) || '?'
+        const profileUrl = item.sec_uid ? 'https://www.douyin.com/user/' + encodeURIComponent(item.sec_uid) : null
+        const roomNick = item.room_nickname || extra.room_nickname || '?'
+
+        // 所有马甲
+        let displayHtml = ''
+        if (item.displays && item.displays.length > 0) {
+          displayHtml = item.displays.map(function(d) {
+            const display = d.display || ''
+            const isCurrent = d.is_current
+            const isDou = display.startsWith('dou')
+            if (isCurrent) {
+              return '<span style="color:#fe2c55;font-size:11px">✅ ' + escapeHtml(display) + (isDou ? ' <span style="color:#ff6b35;font-size:9px">稳定</span>' : ' <span style="color:#34c759;font-size:9px">有效</span>') + '</span>'
+            } else if (isDou) {
+              return '<span style="color:#888;font-size:11px">⏳ ' + escapeHtml(display) + ' <span style="color:#666;font-size:9px">仅供参考</span></span>'
+            } else {
+              return '<span style="color:#ff6b35;font-size:11px">❌ ' + escapeHtml(display) + ' <span style="color:#666;font-size:9px">已失效</span></span>'
+            }
+          }).join('<br>')
         }
-      })
-      const mergedRooms = Object.values(roomMap).sort((a, b) => b.last_seen - a.last_seen)
 
-      // 更新选中的房间
-      const allRoomIds = mergedRooms.flatMap(r => r.room_ids)
-      if (!_historyRoomId || !allRoomIds.includes(_historyRoomId)) {
-        _historyRoomId = mergedRooms[0].room_ids[0]
-      }
-
-      // 渲染直播间选择栏
-      let tabsHtml = '<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">'
-      mergedRooms.forEach(r => {
-        const active = r.room_ids.includes(_historyRoomId) ? ' style="background:#fe2c55;color:#fff;border-color:#fe2c55"' : ''
-        const nickname = r.nickname || r.short_id || r.room_id.slice(0, 8)
-        tabsHtml += `<span class="room-tab" data-rid="${r.room_ids[0]}"${active}>🏠 ${escapeHtml(nickname)} (${r.mystery_count})</span>`
-      })
-      tabsHtml += '</div>'
-      container.innerHTML = tabsHtml + '<div class="empty"><div class="icon">⏳</div>加载中...</div>'
-
-      // 事件委托：点击直播间切换
-      container.addEventListener('click', function(e) {
-        const tab = e.target.closest('.room-tab')
-        if (tab) {
-          _historyRoomId = tab.dataset.rid
-          // 找到这个合并组的全部 room_ids
-          const roomEntry = mergedRooms.find(r => r.room_ids.includes(_historyRoomId))
-          if (roomEntry) _historyRoomIds = roomEntry.room_ids
-          renderHistory()
+        const key = item.sec_uid || item.display || '?'
+        html += '<div class="event mystery" data-su="' + escapeHtml(key) + '">'
+        // 房间标签
+        html += '<div style="font-size:10px;color:#fe2c55;font-weight:600;margin-bottom:2px">' + escapeHtml(roomNick) + '</div>'
+        // 真实名字
+        const realName = escapeHtml(item.real_name || item.display || '?')
+        html += '<div class="name-box">'
+        html += '<span class="name-text mn" onclick="toggleName(' + "'" + escapeHtml(key) + "'" + ')">' + realName + '</span>'
+        html += '</div>'
+        html += '<div style="font-size:10px;color:#888;margin:1px 0">🆔 ' + escapeHtml(uniqueId) + '</div>'
+        if (displayHtml) html += '<div style="font-size:11px;margin:3px 0;line-height:1.6">' + displayHtml + '</div>'
+        // 最后出现时间
+        if (item.last_seen) {
+          const d = new Date(item.last_seen * 1000)
+          html += '<div style="font-size:9px;color:#555;margin-top:2px">最后出现: ' + d.toLocaleString('zh-CN') + '</div>'
         }
+        if (profileUrl) {
+          html += '<div style="font-size:10px;color:#555;margin-top:3px"><a href="' + profileUrl + '" target="_blank" style="color:#5ac8fa;text-decoration:none">🔗 主页</a></div>'
+        }
+        html += '</div>'
       })
-
-      // 记录当前合并组的全部 room_ids
-      const curRoom = mergedRooms.find(r => r.room_ids.includes(_historyRoomId))
-      _historyRoomIds = curRoom ? curRoom.room_ids : [_historyRoomId]
-
-      // 加载该直播间历史
-      fetchHistoryForRoom(_historyRoomId)
+      container.innerHTML = html
     })
     .catch(function(e) {
       container.innerHTML = '<div class="empty"><div class="icon">❌</div>加载失败: ' + escapeHtml(String(e)) + '</div>'
@@ -2120,9 +2195,6 @@ function fetchHistoryForRoom(roomId) {
 
     // 统计 - 简洁版
     let html = tabsHtml
-    html += '<div style="text-align:right;margin-bottom:10px">'
-    html += '<span style="display:inline-flex;align-items:center;gap:8px;font-size:10px;color:#888;padding:4px 10px;background:#1a1a1a;border-radius:8px"><span style="color:#34c759">✅有效</span> <span style="color:#888">⏳仅供参考</span> <span style="color:#ff6b35">❌已失效</span></span>'
-    html += '</div>'
 
     records.forEach(item => {
       const extra = item.extra || {}
@@ -2138,7 +2210,7 @@ function fetchHistoryForRoom(roomId) {
           const isCurrent = d.is_current
           const isDou = display.startsWith('dou')
           if (isCurrent) {
-            return '<span style="color:#fe2c55;font-size:11px">✅ ' + escapeHtml(display) + (isDou ? ' <span style="color:#ff6b35;font-size:9px">稳定</span>' : '') + '</span>'
+            return '<span style="color:#fe2c55;font-size:11px">✅ ' + escapeHtml(display) + (isDou ? ' <span style="color:#ff6b35;font-size:9px">稳定</span>' : ' <span style="color:#34c759;font-size:9px">有效</span>') + '</span>'
           } else if (isDou) {
             return '<span style="color:#888;font-size:11px">⏳ ' + escapeHtml(display) + ' <span style="color:#666;font-size:9px">仅供参考</span></span>'
           } else {
