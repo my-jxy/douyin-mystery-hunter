@@ -844,6 +844,92 @@ def start_listen():
 
     listener = RoomListener(room_id, nickname)
     listeners[room_id] = listener
+    
+    # 从数据库加载该房间之前抓到的神秘人，回放到事件流
+    try:
+        conn = sqlite3.connect(_DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute('''
+            SELECT * FROM mystery_records
+            WHERE room_id = ? AND is_regular = 0
+            ORDER BY first_seen ASC
+            LIMIT 50
+        ''', (room_id,))
+        db_records = [dict(r) for r in cur.fetchall()]
+        cross_better = {}
+        # 跨房间查询更好的 real_name/extra
+        if db_records:
+            all_sec_uids = list(set(r['sec_uid'] for r in db_records if r.get('sec_uid')))
+            placeholders = ','.join('?' * len(all_sec_uids))
+            cur_cross = conn.execute(f'''
+                SELECT sec_uid, real_name, extra
+                FROM mystery_records
+                WHERE sec_uid IN ({placeholders})
+            ''', all_sec_uids)
+            cross_better = {}
+            for cr in cur_cross.fetchall():
+                su = cr['sec_uid']
+                if su not in cross_better:
+                    cross_better[su] = {'real_name': '', 'extra': {}}
+                rn = (cr['real_name'] or '').strip()
+                if rn and not rn.startswith('dou') and not rn.startswith('神秘人'):
+                    cur_best = cross_better[su]['real_name']
+                    if not cur_best or cur_best.startswith('dou') or cur_best.startswith('神秘人'):
+                        cross_better[su]['real_name'] = rn
+                if cr['extra']:
+                    try:
+                        xe = json.loads(cr['extra']) if isinstance(cr['extra'], str) else cr['extra']
+                        if isinstance(xe, dict):
+                            for fld in ('unique_id', 'nickname', 'follower_count'):
+                                if not cross_better[su]['extra'].get(fld) and xe.get(fld):
+                                    cross_better[su]['extra'][fld] = xe[fld]
+                    except:
+                        pass
+        conn.close()
+        
+        seq = 0
+        for r in db_records:
+            seq += 1
+            extra = {}
+            if r.get('extra'):
+                try:
+                    extra = json.loads(r['extra']) if isinstance(r['extra'], str) else r['extra']
+                except:
+                    extra = {}
+            # 用跨房间更好的数据覆盖
+            cb = cross_better.get(r['sec_uid'], {}) if db_records else {}
+            cb_rn = (cb.get('real_name') or '').strip()
+            final_real_name = cb_rn if cb_rn else (r['real_name'] or r['display'])
+            cb_extra = cb.get('extra', {}) or {}
+            if cb_extra:
+                xe = dict(extra)
+                for fld in ('unique_id', 'nickname', 'follower_count'):
+                    if not xe.get(fld) and cb_extra.get(fld):
+                        xe[fld] = cb_extra[fld]
+                extra = xe
+            replay_info = {
+                'display': r['display'],
+                'real_name': final_real_name,
+                'unique_id': extra.get('unique_id', ''),
+                'sec_uid': r['sec_uid'],
+                'gender': '未知',
+                'consume_level': 0,
+                'badge_level': 0,
+                'mystery_man': False,
+                'mystery_seq': seq,
+                'is_regular': False,
+                'extra': extra,
+                'room_id': room_id,
+                'room_nickname': nickname,
+            }
+            listener.recent_mysteries.append(replay_info)
+            listener.send_event('mystery_enter', replay_info)
+        listener.mystery_count = len(db_records)
+        if seq > 0:
+            print(f"[回放] 房间 {room_id} 已回放 {seq} 条历史神秘人记录", flush=True)
+    except Exception as e:
+        print(f"[回放] 加载失败: {e}", flush=True)
+    
     listener.start()
     return jsonify({'success': True, 'room_id': room_id, 'active': running_count + 1, 'max': MAX_ROOMS})
 
