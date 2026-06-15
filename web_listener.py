@@ -1078,6 +1078,36 @@ def all_records(room_id):
                 except:
                     row['extra'] = {}
             rows.append(row)
+        # === 跨房间查询：收集当前所有 sec_uid 在其他房间的更好信息 ===
+        cross_better = {}  # sec_uid -> {real_name, extra}
+        all_sec_uids = list(set(r.get('sec_uid', '') for r in rows if r.get('sec_uid')))
+        if all_sec_uids:
+            placeholders = ','.join('?' * len(all_sec_uids))
+            cur_cross = conn.execute(f'''
+                SELECT sec_uid, real_name, extra, nickname, last_seen
+                FROM mystery_records
+                WHERE sec_uid IN ({placeholders})
+            ''', all_sec_uids)
+            for cr in cur_cross.fetchall():
+                su = cr['sec_uid']
+                if su not in cross_better:
+                    cross_better[su] = {'real_name': '', 'extra': {}, 'nickname': '', 'last_seen': 0}
+                cb = cross_better[su]
+                rn = (cr['real_name'] or '').strip()
+                if rn and not rn.startswith('dou') and not rn.startswith('神秘人'):
+                    cur_best = cb['real_name']
+                    if not cur_best or cur_best.startswith('dou') or cur_best.startswith('神秘人'):
+                        cb['real_name'] = rn
+                if cr['extra']:
+                    try:
+                        xe = json.loads(cr['extra']) if isinstance(cr['extra'], str) else cr['extra']
+                        if isinstance(xe, dict):
+                            for fld in ('unique_id', 'nickname', 'follower_count'):
+                                if not cb['extra'].get(fld) and xe.get(fld):
+                                    cb['extra'][fld] = xe[fld]
+                    except:
+                        pass
+                cb['last_seen'] = max(cb['last_seen'], cr['last_seen'] or 0)
         conn.close()
         # 按 sec_uid 去重，优先保留有真实昵称的记录
         seen = {}
@@ -1129,6 +1159,30 @@ def all_records(room_id):
                 row['display'] = filtered[-1]['display']
                 row['displays'] = filtered
             deduped.append(row)
+        # === 跨房间信息合并：用其他房间更好的 real_name / extra 补充 ===
+        for su, cb in cross_better.items():
+            for row in deduped:
+                if row.get('sec_uid') != su:
+                    continue
+                cb_rn = cb.get('real_name', '') or ''
+                if cb_rn:
+                    ex_rn = row.get('real_name', '') or ''
+                    if (not ex_rn) or (ex_rn.startswith('dou') or ex_rn.startswith('神秘人')):
+                        row['real_name'] = cb_rn
+                cb_extra = cb.get('extra', {}) or {}
+                if cb_extra:
+                    ex_extra = row.get('extra') or {}
+                    if not isinstance(ex_extra, dict):
+                        ex_extra = {}
+                    new_extra = dict(ex_extra)
+                    changed = False
+                    for fld in ('unique_id', 'nickname', 'follower_count'):
+                        if not new_extra.get(fld) and cb_extra.get(fld):
+                            new_extra[fld] = cb_extra[fld]
+                            changed = True
+                    if changed:
+                        row['extra'] = new_extra
+                row['last_seen'] = max(row.get('last_seen', 0) or 0, cb.get('last_seen', 0) or 0)
         deduped.sort(key=lambda x: x.get('last_seen', 0) or 0, reverse=True)
         return jsonify({'success': True, 'records': deduped})
     except Exception as e:
