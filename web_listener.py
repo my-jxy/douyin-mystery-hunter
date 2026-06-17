@@ -195,7 +195,7 @@ def _save_mystery_record(room_id, sec_uid, display, real_name, extra, event_type
         conn.commit()
         conn.close()
     except Exception as e:
-        print(f"[DB] save error: {e}", flush=True)
+        print(f"[ERROR] _save_mystery_record 失败: {e}", flush=True)
 
 def _save_interaction(room_id, sec_uid, display, i_type, content='', gift_count=1, timestamp=None):
     """保存单条互动记录（聊天/送礼）"""
@@ -312,33 +312,39 @@ def lookup_user(sec_uid):
     global _last_api_call
     if sec_uid in _user_info_cache: return _user_info_cache[sec_uid]
     if not sec_uid or len(sec_uid) < 10: return {}
-    try:
-        # 限流：两次API调用至少间隔0.3秒
-        elapsed = time.time() - _last_api_call
-        if elapsed < 0.3:
-            time.sleep(0.3 - elapsed)
-        _last_api_call = time.time()
-        params = {'device_platform': 'webapp', 'aid': '6383',
-                  'sec_user_id': sec_uid, 'version_code': '170400', 'msToken': ''}
-        headers = {'User-Agent': 'Mozilla/5.0 ... Chrome/116.0.0.0',
-                   'Referer': f'https://www.douyin.com/user/{sec_uid}'}
-        resp = requests.get('https://www.douyin.com/aweme/v1/web/user/profile/other/',
-                            params=params, headers=headers,
-                            cookies={'ttwid': _TTWID}, verify=False, timeout=8)
-        j = resp.json()
-        if j.get('status_code') == 0 and 'user' in j:
-            u = j['user']
-            info = {'nickname': u.get('nickname','?'),
-                    'unique_id': u.get('unique_id') or u.get('short_id','?'),
-                    'ip_location': u.get('ip_location',''),
-                    'follower_count': u.get('follower_count',0),
-                    'following_count': u.get('following_count',0),
-                    'total_favorited': u.get('total_favorited',0),
-                    'aweme_count': u.get('aweme_count',0),
-                    'signature': (u.get('signature') or '')[:100]}
-            _user_info_cache[sec_uid] = info
-            return info
-    except: pass
+    for attempt in range(3):
+        try:
+            # 限流：两次API调用至少间隔0.3秒
+            elapsed = time.time() - _last_api_call
+            if elapsed < 0.3:
+                time.sleep(0.3 - elapsed)
+            _last_api_call = time.time()
+            params = {'device_platform': 'webapp', 'aid': '6383',
+                      'sec_user_id': sec_uid, 'version_code': '170400', 'msToken': ''}
+            headers = {'User-Agent': 'Mozilla/5.0 ... Chrome/116.0.0.0',
+                       'Referer': f'https://www.douyin.com/user/{sec_uid}'}
+            resp = requests.get('https://www.douyin.com/aweme/v1/web/user/profile/other/',
+                                params=params, headers=headers,
+                                cookies={'ttwid': _TTWID}, verify=False, timeout=8)
+            j = resp.json()
+            if j.get('status_code') == 0 and 'user' in j:
+                u = j['user']
+                info = {'nickname': u.get('nickname','?'),
+                        'unique_id': u.get('unique_id') or u.get('short_id','?'),
+                        'ip_location': u.get('ip_location',''),
+                        'follower_count': u.get('follower_count',0),
+                        'following_count': u.get('following_count',0),
+                        'total_favorited': u.get('total_favorited',0),
+                        'aweme_count': u.get('aweme_count',0),
+                        'signature': (u.get('signature') or '')[:100]}
+                _user_info_cache[sec_uid] = info
+                return info
+            else:
+                raise Exception(f"status_code={j.get('status_code')}")
+        except Exception as e:
+            print(f"[WARN] lookup_user 第{attempt+1}次失败({sec_uid}): {e}", flush=True)
+            if attempt < 2:
+                time.sleep(1 * (attempt + 1))
     # 查询失败不缓存空结果，下次重试
     return {}
 
