@@ -82,15 +82,26 @@ def _init_db():
         CREATE INDEX IF NOT EXISTS idx_interaction_log
         ON interaction_log(sec_uid, timestamp)
     ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS room_search_history (
+            input_text TEXT PRIMARY KEY,
+            nickname TEXT NOT NULL DEFAULT '',
+            room_id TEXT NOT NULL DEFAULT '',
+            created_at INTEGER NOT NULL DEFAULT 0
+        )
+    ''')
     conn.commit()
     conn.close()
 
 _init_db()
 
-def _save_mystery_record(room_id, sec_uid, display, real_name, extra, event_type, timestamp=None, is_regular=0, room_nickname=None):
+def _save_mystery_record(room_id, sec_uid, display, real_name, extra, event_type, timestamp=None, is_regular=0, room_nickname=None, is_private=False):
     """保存或更新记录。无 sec_uid 的匿名用户不存储"""
     if not sec_uid:
         return
+    # 私密房：即使神秘人也标为普通用户，不进历史页
+    if is_private:
+        is_regular = 1
     if timestamp is None:
         timestamp = int(time.time())
     if extra and isinstance(extra, dict) and extra.get('nickname'):
@@ -172,14 +183,15 @@ def _save_mystery_record(room_id, sec_uid, display, real_name, extra, event_type
               enter_count + add_enter, gift_count + add_gift, chat_count + add_chat,
               room_nickname or ''))
         
-        # display_name 记录（保留所有马甲历史）
-        conn.execute('''
-            INSERT INTO display_names (sec_uid, display, first_seen, last_seen)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(sec_uid, display) DO UPDATE SET
-                seen_count = seen_count + 1,
-                last_seen = MAX(last_seen, ?)
-        ''', (sec_uid or '', display or '', timestamp, timestamp, timestamp))
+        # display_name 记录：私密房跳过（马甲无编号无意义）
+        if not is_private:
+            conn.execute('''
+                INSERT INTO display_names (sec_uid, display, first_seen, last_seen)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(sec_uid, display) DO UPDATE SET
+                    seen_count = seen_count + 1,
+                    last_seen = MAX(last_seen, ?)
+            ''', (sec_uid or '', display or '', timestamp, timestamp, timestamp))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -462,6 +474,21 @@ class RoomListener:
             pass
 
     def _run(self):
+        # ====== 匿名模式检测（在 WS 连接之前，只检测一次） ======
+        if not self.is_private:
+            try:
+                _resp = requests.get(f'https://live.douyin.com/{self.room_id}',
+                    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
+                    cookies=cu.dy_live_auth.cookie, verify=False, timeout=10)
+                if 'live_room_mode' in _resp.text and ':1' in _resp.text.split('live_room_mode')[1][:20]:
+                    self.is_private = True
+                    self.send_event('room_anonymous', {
+                        'message': '当前为匿名模式直播间，仅能通过<b>礼物</b>获取用户真实身份。<br>识别到的用户请点击上方 <b>「📋全部」</b> 按钮查看，不会存入「📜历史」。'
+                    })
+                    print(f"[匿名] 房间 {self.room_id} 为匿名模式，仅处理礼物", flush=True)
+            except Exception as e:
+                print(f"[匿名检测] {self.room_id} 失败: {e}", flush=True)
+
         reconnect_attempts = 0
         max_reconnects = 5
         while self.running and reconnect_attempts < max_reconnects:
@@ -526,6 +553,9 @@ class RoomListener:
                         for item in response.messagesList:
                             self.last_msg_time = time.time()
                             if item.method == 'WebcastMemberMessage':
+                                # 匿名模式：跳过进入事件，只等礼物
+                                if self.is_private:
+                                    continue
                                 msg = Live_pb2.MemberMessage()
                                 msg.ParseFromString(item.payload)
                                 user = msg.user
@@ -548,8 +578,9 @@ class RoomListener:
                                 if is_mystery:
                                     self._mystery_seq += 1
                                     badge_lv = get_badge_level(user)
+                                    uid = user_id_str(user) or (extra.get('unique_id','') if extra else '')
                                     info = {'display': display, 'real_name': real_name,
-                                            'unique_id': user_id_str(user), 'sec_uid': user.sec_uid,
+                                            'unique_id': uid, 'sec_uid': user.sec_uid,
                                             'gender': gender_str(user.gender),
                                             'consume_level': user.consume_diamond_level,
                                             'badge_level': badge_lv, 'mystery_man': mm,
@@ -561,15 +592,18 @@ class RoomListener:
                                         if extra.get('nickname') and extra['nickname'] != real_name:
                                             info['real_name'] = extra['nickname']
                                         info['extra'] = extra
-                                    _save_mystery_record(self.room_id, user.sec_uid or '', display, info['real_name'], extra, 'enter', room_nickname=self.nickname)
-                                    info['room_id'] = self.room_id
-                                    info['room_nickname'] = self.nickname
-                                    self.send_event('mystery_enter', info)
-                                    # 全部页：私密直播间用户（sec_uid为空）也写入磁盘记录
-                                    if _record_all_enabled and not info.get('sec_uid'):
+                                    # 私密房无身份 → 不推送不保存
+                                    has_id = bool(user.sec_uid) or (extra and extra.get('sec_uid'))
+                                    if has_id or not self.is_private:
+                                        _save_mystery_record(self.room_id, user.sec_uid or '', display, info['real_name'], extra, 'enter', room_nickname=self.nickname, is_private=self.is_private)
+                                        info['room_id'] = self.room_id
+                                        info['room_nickname'] = self.nickname
+                                        self.send_event('mystery_enter', info)
+                                    if _record_all_enabled and info.get('sec_uid'):
+                                        info['room_id'] = self.room_id
+                                        info['room_nickname'] = self.nickname
                                         rec = info.copy()
                                         rec['event_type'] = 'enter'
-                                        print(f"[JSONL] 写入: real_name={rec.get('real_name','?')} sec_uid={rec.get('sec_uid','')} has_extra={bool(rec.get('extra'))}", flush=True)
                                         self._write_all_user(rec)
                                 elif _record_all_enabled:
                                     # 私密直播间：用缓存补全真实名
@@ -588,6 +622,9 @@ class RoomListener:
                                     self._write_all_user(info)
 
                             elif item.method == 'WebcastChatMessage':
+                                # 匿名模式：跳过聊天事件，只等礼物
+                                if self.is_private:
+                                    continue
                                 msg = Live_pb2.ChatMessage()
                                 msg.ParseFromString(item.payload)
                                 user = msg.user
@@ -595,6 +632,7 @@ class RoomListener:
                                 # 私密直播间：先查缓存
                                 extra = None
                                 if not user.sec_uid:
+                                    self.is_private = True
                                     cached = _private_name_cache.get(f"{self.room_id}:{display}")
                                     if cached:
                                         print(f"[CACHE] 缓存命中(chat): {display} -> {cached.get('nickname','?')}", flush=True)
@@ -608,25 +646,30 @@ class RoomListener:
                                         is_mystery = False
                                 if is_mystery:
                                     badge_lv = get_badge_level(user)
+                                    uid = user_id_str(user) or (extra.get('unique_id','') if extra else '')
                                     chat_info = {
                                         'display': display, 'real_name': real_name,
                                         'content': msg.content, 'sec_uid': user.sec_uid,
                                         'badge_level': badge_lv,
                                         'consume_level': user.consume_diamond_level,
-                                        'unique_id': user_id_str(user),
+                                        'unique_id': uid,
                                         'mystery_man': mm,
                                         'is_regular': False}
                                     if extra:
                                         if extra.get('nickname') and extra['nickname'] != real_name:
                                             chat_info['real_name'] = extra['nickname']
                                         chat_info['extra'] = extra
-                                    chat_info['room_id'] = self.room_id
-                                    chat_info['room_nickname'] = self.nickname
-                                    _save_mystery_record(self.room_id, user.sec_uid or '', display, real_name, extra, 'chat', room_nickname=self.nickname)
-                                    _save_interaction(self.room_id, user.sec_uid or '', display, 'chat', content=msg.content)
-                                    self.send_event('mystery_chat', chat_info)
-                                    # 全部页：私密直播间用户（sec_uid为空）也写入磁盘记录
-                                    if _record_all_enabled and not chat_info.get('sec_uid'):
+                                    # 私密房无身份 → 不推送不保存
+                                    has_id = bool(user.sec_uid) or (extra and extra.get('sec_uid'))
+                                    if has_id or not self.is_private:
+                                        chat_info['room_id'] = self.room_id
+                                        chat_info['room_nickname'] = self.nickname
+                                        _save_mystery_record(self.room_id, user.sec_uid or '', display, real_name, extra, 'chat', room_nickname=self.nickname, is_private=self.is_private)
+                                        _save_interaction(self.room_id, user.sec_uid or '', display, 'chat', content=msg.content)
+                                        self.send_event('mystery_chat', chat_info)
+                                    if _record_all_enabled and chat_info.get('sec_uid'):
+                                        chat_info['room_id'] = self.room_id
+                                        chat_info['room_nickname'] = self.nickname
                                         rec = chat_info.copy()
                                         rec['event_type'] = 'chat'
                                         self._write_all_user(rec)
@@ -670,41 +713,47 @@ class RoomListener:
                                         if extra and extra.get('nickname') and extra['nickname'] == display:
                                             is_mystery = False
                                     if is_mystery:
+                                        uid = user_id_str(user) or (extra.get('unique_id','') if extra else '')
                                         gift_info = {
                                             'display': display, 'real_name': real_name,
                                             'sec_uid': user.sec_uid, 'gift_name': msg.gift.name if msg.gift else '?',
                                             'count': msg.comboCount,
                                             'badge_level': get_badge_level(user),
                                             'consume_level': user.consume_diamond_level,
-                                            'unique_id': user_id_str(user),
+                                            'unique_id': uid,
                                             'is_regular': False}
                                         if extra:
                                             gift_info['extra'] = extra
-                                        gift_info['room_id'] = self.room_id
-                                        gift_info['room_nickname'] = self.nickname
-                                        _save_mystery_record(self.room_id, user.sec_uid or '', display, real_name, extra, 'gift', room_nickname=self.nickname)
-                                        _save_interaction(self.room_id, user.sec_uid or '', display, 'gift', content=msg.gift.name if msg.gift else '?', gift_count=msg.comboCount)
-                                        self.send_event('mystery_gift', gift_info)
+                                        # 私密房无身份 → 不推送不保存
+                                        has_id = bool(user.sec_uid) or (extra and extra.get('sec_uid'))
+                                        if has_id or not self.is_private:
+                                            gift_info['room_id'] = self.room_id
+                                            gift_info['room_nickname'] = self.nickname
+                                            _save_mystery_record(self.room_id, user.sec_uid or '', display, real_name, extra, 'gift', room_nickname=self.nickname, is_private=self.is_private)
+                                            _save_interaction(self.room_id, user.sec_uid or '', display, 'gift', content=msg.gift.name if msg.gift else '?', gift_count=msg.comboCount)
+                                            self.send_event('mystery_gift', gift_info)
                                     elif _record_all_enabled:
-                                        # 私密直播间：用缓存补全真实名
-                                        if extra and extra.get('nickname') and extra['nickname'] != display:
-                                            gift_real_name = extra['nickname']
-                                        else:
-                                            gift_real_name = real_name
-                                        gift_info = {
-                                            'display': display, 'real_name': gift_real_name,
-                                            'sec_uid': user.sec_uid, 'gift_name': msg.gift.name if msg.gift else '?',
-                                            'count': msg.comboCount,
-                                            'badge_level': get_badge_level(user),
-                                            'consume_level': user.consume_diamond_level,
-                                            'unique_id': user_id_str(user),
-                                            'is_regular': True, 'event_type': 'gift'}
-                                        if extra:
-                                            gift_info['extra'] = extra
-                                        gift_info['room_id'] = self.room_id
-                                        gift_info['room_nickname'] = self.nickname
-                                        self._write_all_user(gift_info)
-                                        _save_interaction(self.room_id, user.sec_uid or '', display, 'gift', content=msg.gift.name if msg.gift else '?', gift_count=msg.comboCount)
+                                        has_id = bool(user.sec_uid) or (extra and extra.get('sec_uid'))
+                                        if has_id or not self.is_private:
+                                            # 私密直播间：用缓存补全真实名
+                                            if extra and extra.get('nickname') and extra['nickname'] != display:
+                                                gift_real_name = extra['nickname']
+                                            else:
+                                                gift_real_name = real_name
+                                            gift_info = {
+                                                'display': display, 'real_name': gift_real_name,
+                                                'sec_uid': user.sec_uid, 'gift_name': msg.gift.name if msg.gift else '?',
+                                                'count': msg.comboCount,
+                                                'badge_level': get_badge_level(user),
+                                                'consume_level': user.consume_diamond_level,
+                                                'unique_id': user_id_str(user),
+                                                'is_regular': True, 'event_type': 'gift'}
+                                            if extra:
+                                                gift_info['extra'] = extra
+                                            gift_info['room_id'] = self.room_id
+                                            gift_info['room_nickname'] = self.nickname
+                                            self._write_all_user(gift_info)
+                                            _save_interaction(self.room_id, user.sec_uid or '', display, 'gift', content=msg.gift.name if msg.gift else '?', gift_count=msg.comboCount)
                                 except Exception:
                                     pass
 
@@ -999,6 +1048,60 @@ def history_rooms():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+# ========== 搜索历史 API ==========
+
+@app.route('/api/search_history/save', methods=['POST'])
+def search_history_save():
+    """保存搜索历史（按 input_text 去重）"""
+    try:
+        data = request.get_json(force=True)
+        input_text = (data.get('input') or '').strip()
+        nickname = (data.get('nickname') or '').strip()
+        room_id = (data.get('room_id') or '').strip()
+        if not input_text:
+            return jsonify({'success': False, 'error': 'input is required'})
+        conn = sqlite3.connect(_DB_PATH)
+        conn.execute(
+            'INSERT OR REPLACE INTO room_search_history (input_text, nickname, room_id, created_at) VALUES (?, ?, ?, ?)',
+            (input_text, nickname, room_id, int(time.time()))
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/search_history/list')
+def search_history_list():
+    """返回最近 20 条搜索历史"""
+    try:
+        conn = sqlite3.connect(_DB_PATH)
+        cur = conn.execute(
+            'SELECT input_text, nickname, room_id, created_at FROM room_search_history ORDER BY created_at DESC LIMIT 20'
+        )
+        rows = cur.fetchall()
+        conn.close()
+        data = [{'input_text': r[0], 'nickname': r[1], 'room_id': r[2], 'created_at': r[3]} for r in rows]
+        return jsonify({'success': True, 'data': data})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/search_history/delete', methods=['POST'])
+def search_history_delete():
+    """删除一条搜索历史"""
+    try:
+        data = request.get_json(force=True)
+        input_text = (data.get('input') or '').strip()
+        if not input_text:
+            return jsonify({'success': False, 'error': 'input is required'})
+        conn = sqlite3.connect(_DB_PATH)
+        conn.execute('DELETE FROM room_search_history WHERE input_text = ?', (input_text,))
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
 @app.route('/api/history_all')
 def history_all():
     """返回指定直播间的历史神秘人记录（跨会话持久化）"""
@@ -1289,6 +1392,7 @@ def stream(room_id):
         # 发送初始状态 + 已有神秘人历史
         init_data = {'room_id': room_id, 'nickname': listener.nickname,
                      'mystery_count': listener.mystery_count,
+                     'is_anonymous': listener.is_private,
                      'history': listener.recent_mysteries[-50:]}
         yield f"data: {json.dumps({'type': 'init', 'data': init_data})}\n\n"
         while listener.running or not listener.events.empty():
@@ -1342,6 +1446,11 @@ h1{font-size:26px;text-align:center;padding:12px 0 8px;background:linear-gradien
 .status-bar .dot.red{background:#ff3b30}
 .status-bar .dot.gray{background:#555}
 @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+/* 匿名模式提示条 */
+.anonymous-banner{display:none;padding:10px 14px;margin:8px 0;border-radius:10px;background:linear-gradient(135deg,rgba(255,149,0,.15),rgba(254,44,85,.1));border:1px solid rgba(255,149,0,.3);font-size:13px;color:#ffb366;line-height:1.6;animation:fadeIn .3s}
+.anonymous-banner.show{display:block}
+.anonymous-banner .icon{font-size:18px;margin-right:6px;vertical-align:-2px}
+.anonymous-banner b{color:#ff9500}
 .event.mystery{background:linear-gradient(135deg,rgba(254,44,85,.15),rgba(255,107,53,.08));border-left:3px solid #fe2c55}
 .event.chat{background:rgba(52,199,89,.08);border-left:3px solid #34c759}
 .event.gift{background:rgba(255,149,0,.08);border-left:3px solid #ff9500}
@@ -1388,20 +1497,70 @@ h1{font-size:26px;text-align:center;padding:12px 0 8px;background:linear-gradien
 .events::-webkit-scrollbar-thumb{background:#333;border-radius:2px}
 .event{padding:7px 9px;border-radius:8px;font-size:12px;line-height:1.4;min-height:108px;min-width:0;background:rgba(26,26,26,0.7);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
 .event.exp{height:auto;min-height:108px}
+.history-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: rgba(30,30,30,0.97);
+  border: 1px solid #333;
+  border-radius: 8px;
+  margin-top: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 100;
+  display: none;
+}
+.history-dropdown .item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #ccc;
+  border-bottom: 1px solid #222;
+  transition: background 0.15s;
+}
+.history-dropdown .item:last-child { border-bottom: none; }
+.history-dropdown .item:hover { background: rgba(255,255,255,0.06); }
+.history-dropdown .item .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.history-dropdown .item .del-btn {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #666;
+  font-size: 14px;
+  margin-left: 8px;
+  transition: all 0.15s;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+.history-dropdown .item .del-btn:hover { color: #fe2c55; background: rgba(254,44,85,0.1); }
+.history-dropdown .empty-msg { padding: 12px; text-align: center; color: #555; font-size: 12px; }
 </style>
   <script src="/static/anime.min.js"></script>
 </head>
 <body>
 <div class="container">
   <h1>🎯 神秘人猎人</h1>
-  <div class="input-group">
+  <div class="input-group" style="position:relative">
     <input id="input" type="text" placeholder="抖音号 / 链接" autocomplete="off" enterkeyhint="search">
     <button id="btn" onclick="handleBtnClick()">🔍 监听</button>
+    <div id="historyDropdown" class="history-dropdown"></div>
   </div>
   <div class="hint">支持：抖音号 · 直播间链接 · 主页链接</div>
   <div class="status-bar" id="statusBar">
     <span><span class="dot gray" id="dot"></span><span id="statusText">未连接</span></span>
     <span><span id="statsText" class="stats-text" style="margin-right:4px"></span><span class="mode-btn active" id="modeMystery" onclick="switchMode('mystery')">🎯神秘人</span><span class="mode-btn" id="modeAll" onclick="switchMode('all')">📋全部</span><span class="mode-btn" id="modeHistory" onclick="switchMode('history')">📜历史</span></span>
+  </div>
+  <div class="anonymous-banner" id="anonymousBanner">
+    <span class="icon">🕵️</span><span id="anonymousMsg"></span>
   </div>
   <div class="events" id="events">
     <div class="empty"><div class="icon">🎯</div>输入抖音号或链接<br>点击「监听」开始</div>
@@ -1415,6 +1574,7 @@ let disconnectTimers = {}   // room_id -> timer
 let recordAllEnabled = false  // 是否记录全部用户
 let currentView = 'mystery'   // 'mystery' 或 'all'
 let lastRoomId = null         // 最近监听的房间，用于按钮切换停止
+let historyCache = []          // 搜索历史缓存（预加载零延迟）
 
 function escapeHtml(text) {
   const d = document.createElement('div')
@@ -1425,6 +1585,12 @@ function escapeHtml(text) {
 function setStatus(text, color) {
   document.getElementById('statusText').textContent = text
   document.getElementById('dot').className = 'dot ' + color
+}
+
+function showAnonymousBanner(msg) {
+  const b = document.getElementById('anonymousBanner')
+  document.getElementById('anonymousMsg').innerHTML = msg
+  b.classList.add('show')
 }
 
 function resetBtnText() {
@@ -1469,6 +1635,22 @@ function connect() {
         return
       }
       startListening(data.room_id, data.nickname || '')
+      // 保存搜索历史
+      const saveInput = input
+      const saveNickname = data.nickname || ''
+      const saveRoomId = data.room_id
+      fetch('/api/search_history/save', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({input: saveInput, nickname: saveNickname, room_id: saveRoomId})
+      }).then(r => r.json()).then(res => {
+        if (res.success) {
+          // 本地缓存同步更新
+          historyCache = historyCache.filter(item => item.input_text !== saveInput)
+          historyCache.unshift({input_text: saveInput, nickname: saveNickname, room_id: saveRoomId, created_at: Math.floor(Date.now()/1000)})
+          if (historyCache.length > 20) historyCache = historyCache.slice(0, 20)
+        }
+      }).catch(() => {})
     } else if (data.room_id && data.live_status == 0) {
       showToast('❌ 该主播未在直播')
       btn.disabled = false
@@ -1484,6 +1666,63 @@ function connect() {
     btn.disabled = false
     resetBtnText()
   })
+}
+
+// ========== 搜索历史 ==========
+
+function loadRoomHistory() {
+  const dd = document.getElementById('historyDropdown')
+  renderHistoryFromCache()
+  // 后台刷新缓存，供下一次 focus
+  refreshHistoryCache()
+}
+
+function renderHistoryFromCache() {
+  const dd = document.getElementById('historyDropdown')
+  if (!historyCache || historyCache.length === 0) {
+    dd.innerHTML = '<div class="empty-msg">暂无搜索记录</div>'
+    dd.style.display = 'block'
+    return
+  }
+  let html = ''
+  historyCache.forEach(item => {
+    const name = escapeHtml(item.nickname || item.input_text)
+    html += `<div class="item" onclick="selectHistory('${escapeHtml(item.input_text)}', '${escapeHtml(item.nickname || '')}')">`
+    html += `<span class="name">🎙 ${name}</span>`
+    html += `<button class="del-btn" onclick="event.stopPropagation();removeRoomHistory('${escapeHtml(item.input_text)}')">✕</button>`
+    html += `</div>`
+  })
+  dd.innerHTML = html
+  dd.style.display = 'block'
+}
+
+function refreshHistoryCache() {
+  fetch('/api/search_history/list')
+    .then(r => r.json())
+    .then(res => {
+      if (res.success && res.data) historyCache = res.data
+    })
+    .catch(() => {})
+}
+
+function removeRoomHistory(input) {
+  // 本地同步删除
+  historyCache = historyCache.filter(item => item.input_text !== input)
+  renderHistoryFromCache()
+  // 服务端异步删除
+  fetch('/api/search_history/delete', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({input: input})
+  })
+  .then(r => r.json())
+  .catch(() => {})
+}
+
+function selectHistory(input, nickname) {
+  document.getElementById('input').value = input
+  document.getElementById('historyDropdown').style.display = 'none'
+  connect()
 }
 
 function handleBtnClick() {
@@ -1702,6 +1941,13 @@ function handleEvent(event, roomId) {
     case 'connected':
       cancelDisconnect(roomId)
       setStatus('监听中', 'green')
+      // 匿名模式提示
+      if (d.is_anonymous) {
+        showAnonymousBanner(d.is_anonymous_msg || '当前为匿名模式直播间，仅能通过<b>礼物</b>获取用户真实身份。<br>识别到的用户请点击上方 <b>「📋全部」</b> 按钮查看，不会存入「📜历史」。')
+      }
+      break
+    case 'room_anonymous':
+      showAnonymousBanner(d.message || '当前为匿名模式直播间，仅能通过礼物获取用户真实身份。')
       break
     case 'disconnected':
       if (d.reconnecting) {
@@ -1866,7 +2112,8 @@ function renderMysteries() {
     if (m.chats.length) html += `💬${m.chats.length}条 `
     if (m.gifts.length) html += `🎁${m.gifts.length}个`
     html += `</div>`
-    html += `<div style="font-size:10px;color:#555;margin-top:1px"><a class="link" href="javascript:;" onclick="window.open('https://www.douyin.com/user/${secUid}','_blank')">🔗 主页</a></div>`
+    const secUidRaw = m.sec_uid ? m.sec_uid : ""
+    if (secUidRaw) html += `<div style="font-size:10px;color:#555;margin-top:1px"><a href="https://www.douyin.com/user/${encodeURIComponent(secUidRaw)}" target="_blank" style="color:#5ac8fa;text-decoration:none">🔗 主页</a></div>`
 
     if (totalActions > 0) {
       html += `<div id="actions-${secUid}" style="display:${m.expanded?'block':'none'};margin-top:6px;border-top:1px solid #222;padding-top:4px">`
@@ -1940,7 +2187,8 @@ function renderSingleCard(key) {
   if (m.chats.length) cardHtml += `💬${m.chats.length}条 `
   if (m.gifts.length) cardHtml += `🎁${m.gifts.length}个`
   cardHtml += `</div>`
-  cardHtml += `<div style="font-size:10px;color:#555;margin-top:1px"><a class="link" href="javascript:;" onclick="window.open('https://www.douyin.com/user/${key}','_blank')">🔗 主页</a></div>`
+  const cardSecUid = m.sec_uid ? m.sec_uid : ""
+  if (cardSecUid) cardHtml += `<div style="font-size:10px;color:#555;margin-top:1px"><a href="https://www.douyin.com/user/${encodeURIComponent(cardSecUid)}" target="_blank" style="color:#5ac8fa;text-decoration:none">🔗 主页</a></div>`
   if (totalActions > 0) {
     cardHtml += `<div id="actions-${key}" style="display:${m.expanded?'block':'none'};margin-top:6px;border-top:1px solid #222;padding-top:4px">`
     m.chats.forEach(c => {
@@ -2298,7 +2546,7 @@ function renderAllCards(users, container, roomColors, roomMap) {
       if (ft) html += `<div style="font-size:10px;color:#888">📊 ${ft}</div>`
       if (u.extra.ip_location) html += `<div style="font-size:10px;color:#888">🌍 ${escapeHtml(u.extra.ip_location)}</div>`
       if (u.extra.signature) html += `<div style="font-size:10px;color:#777;margin-top:1px">📝 ${escapeHtml(u.extra.signature)}</div>`
-      if (u.extra.sec_uid) html += `<div style="font-size:10px;color:#555;margin-top:1px"><a class="link" href="javascript:;" onclick="window.open('https://www.douyin.com/user/${u.extra.sec_uid}','_blank')">🔗 主页</a></div>`
+      if (u.sec_uid) html += `<div style="font-size:10px;color:#555;margin-top:1px"><a href="https://www.douyin.com/user/${encodeURIComponent(u.sec_uid)}" target="_blank" style="color:#5ac8fa;text-decoration:none">🔗 主页</a></div>`
     }
     html += `<div style="font-size:10px;color:#777;margin:1px 0">`
     if (u.enter_count) html += `🚪${u.enter_count}次 `
@@ -2405,6 +2653,17 @@ document.getElementById('input').addEventListener('keydown', function(e) {
 document.getElementById('input').addEventListener('keyup', resetBtnText)
 document.getElementById('input').addEventListener('blur', resetBtnText)
 
+// ========== 搜索历史下拉 ==========
+document.getElementById('input').addEventListener('focus', function() {
+  loadRoomHistory()
+})
+document.getElementById('input').addEventListener('blur', function() {
+  // 延迟隐藏，给点击 dropdown 留时间
+  setTimeout(() => {
+    document.getElementById('historyDropdown').style.display = 'none'
+  }, 200)
+})
+
 // 定时刷新活跃房间列表
 setInterval(refreshRooms, 5000)
 
@@ -2448,6 +2707,7 @@ function stopRoom(roomId) {
       document.getElementById('btn').className = ''
       lastRoomId = null
       setStatus('未连接', 'gray')
+      document.getElementById('anonymousBanner').classList.remove('show')
     }
     refreshRooms()
   })
@@ -2466,6 +2726,7 @@ function stopAll() {
   document.getElementById('btn').className = ''
   lastRoomId = null
   setStatus('未连接', 'gray')
+  document.getElementById('anonymousBanner').classList.remove('show')
   document.getElementById('events').innerHTML = '<div class="empty"><div class="icon">🎯</div>已停止</div>'
   fetch('/api/stop_all', {method: 'POST'}).then(() => refreshRooms())
 }
@@ -2577,6 +2838,9 @@ switchMode = function(mode){
   origSwitch(mode);
   // 切换后卡片已有新内容，动画在 render 函数里已触发
 };
+
+// 页面加载时预搜索历史缓存
+refreshHistoryCache();
 </script>
 </body>
 </html>"""
