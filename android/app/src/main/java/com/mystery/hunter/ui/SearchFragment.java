@@ -181,9 +181,6 @@ public class SearchFragment extends Fragment {
                     frag.setInputText(item.inputText);
                 }
                 // 切换到第一个 tab (0 = monitoring)
-                if (getActivity() instanceof com.google.android.material.bottomnavigation.BottomNavigationView) {
-                    // handled by the monitoring fragment
-                }
                 if (getActivity() != null) {
                     androidx.viewpager2.widget.ViewPager2 vp = getActivity().findViewById(R.id.view_pager);
                     if (vp != null) vp.setCurrentItem(0, true);
