@@ -16,6 +16,7 @@ import android.view.View;
 import android.view.WindowManager;
 import android.widget.ImageView;
 import androidx.core.app.NotificationCompat;
+import androidx.annotation.Nullable;
 
 public class FloatingWindowService extends Service {
 
