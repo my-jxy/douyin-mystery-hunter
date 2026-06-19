@@ -25,17 +25,17 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew || true
-
-      - name: Generate Gradle Wrapper
-        run: gradle wrapper --gradle-version 8.9
+      - name: Accept licenses
+        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug
+        run: gradle assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -44,12 +44,8 @@ jobs:
           path: android/app/build/outputs/apk/debug/*.apk
           retention-days: 30
 
-  # Release with signing — requires GitHub Secrets:
-  #   ANDROID_SIGNING_KEY, ANDROID_KEY_ALIAS,
-  #   ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_PASSWORD
   release:
-    if: github.ref == 'refs/heads/main' && vars.ANDROID_SIGNING_KEY != ''
-    needs: build
+    if: false  # disabled for now
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -57,30 +53,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
-
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-
-      - name: Generate Gradle Wrapper
-        run: gradle wrapper --gradle-version 8.9
-
       - name: Build Release APK
         run: ./gradlew assembleRelease
-        env:
-          ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-
-      - name: Upload Release APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: mystery-hunter-release
-          path: android/app/build/outputs/apk/release/*.apk
-          retention-days: 30
