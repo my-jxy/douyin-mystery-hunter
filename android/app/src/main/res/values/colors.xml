@@ -1,16 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="colorPrimary">#1A1A2E</color>
-    <color name="colorPrimaryDark">#0F0F23</color>
-    <color name="colorAccent">#E94560</color>
-    <color name="backgroundDark">#1A1A2E</color>
-    <color name="surfaceDark">#16213E</color>
-    <color name="cardDark">#0F3460</color>
-    <color name="textPrimary">#FFFFFF</color>
-    <color name="textSecondary">#AAAAAA</color>
-    <color name="textHint">#666666</color>
-    <color name="accentGreen">#4CAF50</color>
-    <color name="accentRed">#FF6B6B</color>
-    <color name="accentYellow">#FFD93D</color>
-    <color name="floatingBg">#E94560</color>
+    <color name="dark_bg">#FF1A1A2E</color>
+    <color name="dark_surface">#FF16213E</color>
+    <color name="dark_card">#FF0F3460</color>
+    <color name="accent">#FF00D9FF</color>
+    <color name="accent_dim">#FF0099CC</color>
+    <color name="text_primary">#FFE0E0E0</color>
+    <color name="text_secondary">#FF888888</color>
+    <color name="danger">#FFFF4444</color>
+    <color name="success">#FF44FF44</color>
+    <color name="warning">#FFFFBB33</color>
+
+    <!-- Aliases for Reasonix-generated layouts -->
+    <color name="colorPrimary">#FF1A1A2E</color>
+    <color name="colorPrimaryDark">#FF0F0F23</color>
+    <color name="colorAccent">#FF00D9FF</color>
+    <color name="backgroundDark">#FF1A1A2E</color>
+    <color name="surfaceDark">#FF16213E</color>
+    <color name="cardDark">#FF0F3460</color>
+    <color name="textPrimary">#FFFFFFFF</color>
+    <color name="textSecondary">#FFAAAAAA</color>
+    <color name="accentGreen">#FF4CAF50</color>
+    <color name="accentRed">#FFFF6B6B</color>
+    <color name="floatingBg">#FF00D9FF</color>
 </resources>
