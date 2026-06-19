@@ -18,20 +18,26 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 import com.google.gson.Gson;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import com.google.gson.reflect.TypeToken;
 import com.mystery.hunter.R;
 import com.mystery.hunter.api.ApiClient;
 import com.mystery.hunter.api.ApiConfig;
 import com.mystery.hunter.api.SSEClient;
-import com.mystery.hunter.model.RoomStatus;
-import java.lang.reflect.Type;
+import com.mystery.hunter.model.StatusResponse;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 监听管理 Fragment
+ * API:
+ *   POST /api/resolve  -> {"success": true, "room_id": "...", "nickname": "...", "live_status": 0/1, "sec_uid": "..."}
+ *   POST /api/start    -> {"success": true, "room_id": "...", "already": false/true}
+ *   POST /api/stop     -> {"success": true, "room_id": "..."}
+ *   POST /api/stop_all -> {"success": true}
+ *   GET  /api/status   -> {"active": [{room_id, nickname, mystery_count, unique_count}], "count": N, "max": N}
+ */
 public class MonitoringFragment extends Fragment {
 
     private SwipeRefreshLayout swipeRefresh;
@@ -40,7 +46,7 @@ public class MonitoringFragment extends Fragment {
     private EditText etRoomInput;
     private Button btnStart, btnStopAll;
     private RoomAdapter adapter;
-    private final List<RoomStatus> roomList = new ArrayList<>();
+    private final List<StatusResponse.ActiveRoom> roomList = new ArrayList<>();
     private final Map<String, SSEClient> sseClients = new HashMap<>();
     private final Gson gson = ApiClient.getGson();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -78,23 +84,32 @@ public class MonitoringFragment extends Fragment {
         return v;
     }
 
+    @Override
+    public void onResume() {
+        super.onResume();
+        loadStatus();
+    }
+
+    /**
+     * 加载当前活跃房间列表
+     * GET /api/status -> {"active": [{room_id, nickname, mystery_count, unique_count}], "count": N, "max": N}
+     */
     private void loadStatus() {
         ApiClient.get(ApiConfig.BASE_URL + ApiConfig.STATUS, new ApiClient.ApiCallback() {
             @Override
             public void onSuccess(String response) {
                 mainHandler.post(() -> {
                     try {
-                        JsonObject obj = gson.fromJson(response, JsonObject.class);
-                        JsonArray rooms = obj.has("rooms") ? obj.getAsJsonArray("rooms") : obj.getAsJsonArray("active");
-                        Type listType = new TypeToken<List<RoomStatus>>() {}.getType();
-                        List<RoomStatus> newList = gson.fromJson(rooms, listType);
+                        StatusResponse status = gson.fromJson(response, StatusResponse.class);
                         roomList.clear();
-                        roomList.addAll(newList);
+                        if (status.active != null) {
+                            roomList.addAll(status.active);
+                        }
                         updateUI();
 
-                        // 为 listening 状态的房间自动连接 SSE
-                        for (RoomStatus rs : roomList) {
-                            if (rs.isListening() && !sseClients.containsKey(rs.roomId)) {
+                        // 为所有活跃房间连接 SSE
+                        for (StatusResponse.ActiveRoom rs : roomList) {
+                            if (!sseClients.containsKey(rs.roomId)) {
                                 connectSSE(rs.roomId);
                             }
                         }
@@ -115,136 +130,179 @@ public class MonitoringFragment extends Fragment {
         });
     }
 
+    /**
+     * 开始监听：先 resolve 再 start
+     * POST /api/resolve -> {"success": true, "room_id": "...", "nickname": "...", "live_status": 0/1, "sec_uid": "..."}
+     * POST /api/start   -> {"success": true, "room_id": "...", "already": false/true}
+     */
     private void startMonitoring() {
         String input = etRoomInput.getText().toString().trim();
         if (input.isEmpty()) {
-            Toast.makeText(getContext(), "请输入直播间链接或名称", Toast.LENGTH_SHORT).show();
+            Toast.makeText(getContext(), "请输入抖音号或链接", Toast.LENGTH_SHORT).show();
             return;
         }
 
-        // 先 resolve
-        JsonObject body = new JsonObject();
-        body.addProperty("input", input);
-        ApiClient.post(ApiConfig.BASE_URL + ApiConfig.RESOLVE, body.toString(), new ApiClient.ApiCallback() {
+        btnStart.setEnabled(false);
+        btnStart.setText("解析中...");
+
+        // Step 1: Resolve
+        JsonObject resolveBody = new JsonObject();
+        resolveBody.addProperty("input", input);
+        ApiClient.post(ApiConfig.BASE_URL + ApiConfig.RESOLVE, resolveBody.toString(), new ApiClient.ApiCallback() {
             @Override
             public void onSuccess(String response) {
                 mainHandler.post(() -> {
                     try {
                         JsonObject res = gson.fromJson(response, JsonObject.class);
-                        if (res.has("success") && !res.get("success").getAsBoolean()) {
-                            String error = res.has("error") ? res.get("error").getAsString() : "未知错误";
-                            Toast.makeText(getContext(), "解析失败: " + error, Toast.LENGTH_SHORT).show();
+                        // 检查是否成功
+                        if (!res.has("success") || !res.get("success").getAsBoolean()) {
+                            String error = res.has("error") ? res.get("error").getAsString() : "解析失败";
+                            Toast.makeText(getContext(), error, Toast.LENGTH_SHORT).show();
+                            resetBtn();
                             return;
                         }
                         String roomId = res.get("room_id").getAsString();
+                        String nickname = res.has("nickname") ? res.get("nickname").getAsString() : "";
 
-                        // 再 start
+                        // live_status 为 0 表示未在直播
+                        if (res.has("live_status") && res.get("live_status").getAsInt() == 0) {
+                            Toast.makeText(getContext(), "该主播未在直播", Toast.LENGTH_SHORT).show();
+                            resetBtn();
+                            return;
+                        }
+
+                        // Step 2: Start
                         JsonObject startBody = new JsonObject();
                         startBody.addProperty("room_id", roomId);
+                        startBody.addProperty("nickname", nickname);
                         ApiClient.post(ApiConfig.BASE_URL + ApiConfig.START, startBody.toString(),
                                 new ApiClient.ApiCallback() {
                                     @Override
                                     public void onSuccess(String startRes) {
                                         mainHandler.post(() -> {
-                                            Toast.makeText(getContext(), "开始监听 " + roomId, Toast.LENGTH_SHORT).show();
-                                            etRoomInput.setText("");
-                                            connectSSE(roomId);
-                                            loadStatus();
+                                            try {
+                                                JsonObject sr = gson.fromJson(startRes, JsonObject.class);
+                                                if (sr.has("success") && sr.get("success").getAsBoolean()) {
+                                                    Toast.makeText(getContext(), "已开始监听 " + (nickname.isEmpty() ? roomId : nickname), Toast.LENGTH_SHORT).show();
+                                                    etRoomInput.setText("");
+                                                    connectSSE(roomId);
+                                                    loadStatus();
+                                                } else {
+                                                    String err = sr.has("error") ? sr.get("error").getAsString() : "启动失败";
+                                                    Toast.makeText(getContext(), err, Toast.LENGTH_SHORT).show();
+                                                }
+                                            } catch (Exception e) {
+                                                Toast.makeText(getContext(), "启动失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                                            }
+                                            resetBtn();
                                         });
                                     }
 
                                     @Override
                                     public void onError(String error) {
-                                        mainHandler.post(() -> Toast.makeText(getContext(),
-                                                "启动失败: " + error, Toast.LENGTH_SHORT).show());
+                                        mainHandler.post(() -> {
+                                            Toast.makeText(getContext(), "启动失败: " + error, Toast.LENGTH_SHORT).show();
+                                            resetBtn();
+                                        });
                                     }
                                 });
                     } catch (Exception e) {
                         Toast.makeText(getContext(), "解析失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                        resetBtn();
                     }
                 });
             }
 
             @Override
             public void onError(String error) {
-                mainHandler.post(() -> Toast.makeText(getContext(),
-                        "解析失败: " + error, Toast.LENGTH_SHORT).show());
+                mainHandler.post(() -> {
+                    Toast.makeText(getContext(), "网络错误: " + error, Toast.LENGTH_SHORT).show();
+                    resetBtn();
+                });
             }
         });
     }
 
+    private void resetBtn() {
+        btnStart.setEnabled(true);
+        btnStart.setText("开始监听");
+    }
+
+    /**
+     * 连接 SSE 实时事件流
+     */
     private void connectSSE(String roomId) {
         SSEClient sseClient = new SSEClient();
         sseClients.put(roomId, sseClient);
         sseClient.connect(roomId, new SSEClient.SseCallback() {
             @Override
             public void onConnected() {
-                mainHandler.post(() -> {
-                    for (RoomStatus rs : roomList) {
-                        if (rs.roomId.equals(roomId)) {
-                            rs.sseConnected = true;
-                            adapter.notifyDataSetChanged();
-                            break;
-                        }
-                    }
-                });
+                mainHandler.post(() -> adapter.notifyDataSetChanged());
             }
 
             @Override
             public void onEvent(String type, String data) {
-                // 收到实时消息，在 UI 上提示
+                // 收到实时消息 - 只做轻量提示
                 mainHandler.post(() -> {
                     try {
+                        // SSE events are wrapped: {"type": "mystery_enter", "data": {...}}
                         JsonObject event = gson.fromJson(data, JsonObject.class);
                         String eventType = event.has("type") ? event.get("type").getAsString() : type;
-                        String display = event.has("display") ? event.get("display").getAsString() : "";
+                        JsonObject eventData = event.has("data") ? event.getAsJsonObject("data") : null;
+
+                        String display = "";
+                        if (eventData != null && eventData.has("display")) {
+                            display = eventData.get("display").getAsString();
+                        }
+
                         String msg;
                         switch (eventType) {
-                            case "enter":
-                                msg = "🚪 " + display + " 进入直播间";
+                            case "init":
+                                msg = "✅ SSE 已连接";
                                 break;
-                            case "gift":
-                                msg = "🎁 " + display + " 送出礼物";
+                            case "enter":
+                                msg = "🚪 神秘人: " + display;
                                 break;
                             case "chat":
-                                msg = "💬 " + display + " 发言";
+                                msg = "💬 " + display;
+                                break;
+                            case "gift":
+                                msg = "🎁 " + display + " 送了礼物";
+                                break;
+                            case "error":
+                                msg = "⚠️ " + display;
+                                break;
+                            case "connected":
+                                msg = null; // suppress raw "connected" type if still sent
                                 break;
                             default:
-                                msg = "📡 " + display;
+                                msg = null;
                         }
-                        Toast.makeText(getContext(), msg, Toast.LENGTH_SHORT).show();
+                        if (msg != null) {
+                            Toast.makeText(getContext(), msg, Toast.LENGTH_SHORT).show();
+                        }
+                        // 刷新房间列表更新 count
+                        loadStatus();
                     } catch (Exception ignored) {}
                 });
             }
 
             @Override
             public void onDisconnected() {
-                mainHandler.post(() -> {
-                    for (RoomStatus rs : roomList) {
-                        if (rs.roomId.equals(roomId)) {
-                            rs.sseConnected = false;
-                            adapter.notifyDataSetChanged();
-                            break;
-                        }
-                    }
-                });
+                mainHandler.post(() -> adapter.notifyDataSetChanged());
             }
 
             @Override
             public void onError(String message) {
-                mainHandler.post(() -> {
-                    for (RoomStatus rs : roomList) {
-                        if (rs.roomId.equals(roomId)) {
-                            rs.sseConnected = false;
-                            adapter.notifyDataSetChanged();
-                            break;
-                        }
-                    }
-                });
+                mainHandler.post(() -> adapter.notifyDataSetChanged());
             }
         });
     }
 
+    /**
+     * 停止指定房间
+     * POST /api/stop -> {"success": true, "room_id": "..."}
+     */
     private void stopRoom(String roomId) {
         JsonObject body = new JsonObject();
         body.addProperty("room_id", roomId);
@@ -252,9 +310,19 @@ public class MonitoringFragment extends Fragment {
             @Override
             public void onSuccess(String response) {
                 mainHandler.post(() -> {
-                    disconnectSSE(roomId);
-                    Toast.makeText(getContext(), "已停止 " + roomId, Toast.LENGTH_SHORT).show();
-                    loadStatus();
+                    try {
+                        JsonObject res = gson.fromJson(response, JsonObject.class);
+                        if (!res.has("success") || !res.get("success").getAsBoolean()) {
+                            String err = res.has("error") ? res.get("error").getAsString() : "停止失败";
+                            Toast.makeText(getContext(), err, Toast.LENGTH_SHORT).show();
+                            return;
+                        }
+                        disconnectSSE(roomId);
+                        Toast.makeText(getContext(), "已停止", Toast.LENGTH_SHORT).show();
+                        loadStatus();
+                    } catch (Exception e) {
+                        Toast.makeText(getContext(), "停止失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                    }
                 });
             }
 
@@ -265,14 +333,28 @@ public class MonitoringFragment extends Fragment {
         });
     }
 
+    /**
+     * 停止全部
+     * POST /api/stop_all -> {"success": true}
+     */
     private void stopAll() {
         ApiClient.post(ApiConfig.BASE_URL + ApiConfig.STOP_ALL, "{}", new ApiClient.ApiCallback() {
             @Override
             public void onSuccess(String response) {
                 mainHandler.post(() -> {
-                    disconnectAllSSE();
-                    Toast.makeText(getContext(), "已停止全部监听", Toast.LENGTH_SHORT).show();
-                    loadStatus();
+                    try {
+                        JsonObject res = gson.fromJson(response, JsonObject.class);
+                        if (!res.has("success") || !res.get("success").getAsBoolean()) {
+                            String err = res.has("error") ? res.get("error").getAsString() : "停止全部失败";
+                            Toast.makeText(getContext(), err, Toast.LENGTH_SHORT).show();
+                            return;
+                        }
+                        disconnectAllSSE();
+                        Toast.makeText(getContext(), "已停止全部", Toast.LENGTH_SHORT).show();
+                        loadStatus();
+                    } catch (Exception e) {
+                        Toast.makeText(getContext(), "停止全部失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                    }
                 });
             }
 
@@ -329,14 +411,18 @@ public class MonitoringFragment extends Fragment {
 
         @Override
         public void onBindViewHolder(@NonNull VH h, int pos) {
-            RoomStatus rs = roomList.get(pos);
-            h.tvNick.setText(rs.nickname != null ? rs.nickname : rs.roomId);
-            h.tvRoomId.setText("ID: " + rs.roomId);
-            h.tvStatus.setText(rs.isListening() ? "监听中" : "已停止");
-            h.tvStatus.setTextColor(rs.isListening() ? 0xFF4CAF50 : 0xFF888888);
-            h.tvSse.setText("SSE: " + (rs.sseConnected ? "已连接" : "未连接"));
-            h.tvSse.setTextColor(rs.sseConnected ? 0xFF4CAF50 : 0xFFFF6B6B);
-            h.btnStop.setVisibility(rs.isListening() ? View.VISIBLE : View.GONE);
+            StatusResponse.ActiveRoom rs = roomList.get(pos);
+            String nickname = rs.nickname != null && !rs.nickname.isEmpty() ? rs.nickname : rs.roomId;
+            h.tvNick.setText(nickname);
+            h.tvRoomId.setText("ID: " + rs.roomId + " | 🎯" + rs.mysteryCount + " | 👤" + rs.uniqueCount);
+
+            boolean connected = sseClients.containsKey(rs.roomId);
+            h.tvStatus.setText("监听中");
+            h.tvStatus.setTextColor(0xFF4CAF50);
+            h.tvSse.setText(connected ? "SSE: 已连接" : "SSE: 未连接");
+            h.tvSse.setTextColor(connected ? 0xFF4CAF50 : 0xFFFF6B6B);
+
+            h.btnStop.setVisibility(View.VISIBLE);
             h.btnStop.setOnClickListener(v -> stopRoom(rs.roomId));
         }
 

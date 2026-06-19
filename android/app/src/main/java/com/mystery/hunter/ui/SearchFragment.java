@@ -16,19 +16,22 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 import com.google.gson.Gson;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import com.google.gson.reflect.TypeToken;
 import com.mystery.hunter.R;
 import com.mystery.hunter.api.ApiClient;
 import com.mystery.hunter.api.ApiConfig;
-import java.lang.reflect.Type;
+import com.mystery.hunter.model.SearchHistoryItem;
+import com.mystery.hunter.model.SearchHistoryResponse;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
+/**
+ * 搜索历史 Fragment
+ * API: /api/search_history/list -> {"success": true, "data": [{input_text, nickname, room_id, created_at}]}
+ */
 public class SearchFragment extends Fragment {
 
     private SwipeRefreshLayout swipeRefresh;
@@ -85,10 +88,11 @@ public class SearchFragment extends Fragment {
             public void onSuccess(String response) {
                 mainHandler.post(() -> {
                     try {
-                        Type listType = new TypeToken<List<SearchHistoryItem>>() {}.getType();
-                        List<SearchHistoryItem> items = gson.fromJson(response, listType);
-                        historyList.clear();
-                        if (items != null) historyList.addAll(items);
+                        SearchHistoryResponse resp = gson.fromJson(response, SearchHistoryResponse.class);
+                        if (resp.success && resp.data != null) {
+                            historyList.clear();
+                            historyList.addAll(resp.data);
+                        }
                         updateUI();
                     } catch (Exception e) {
                         Toast.makeText(getContext(), "解析失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
@@ -110,16 +114,29 @@ public class SearchFragment extends Fragment {
     private void deleteItem(int pos) {
         SearchHistoryItem item = historyList.get(pos);
         JsonObject body = new JsonObject();
-        body.addProperty("room_id", item.roomId);
+        body.addProperty("input", item.inputText);
         ApiClient.post(ApiConfig.BASE_URL + ApiConfig.SEARCH_HISTORY_DELETE, body.toString(),
                 new ApiClient.ApiCallback() {
                     @Override
                     public void onSuccess(String response) {
                         mainHandler.post(() -> {
-                            historyList.remove(pos);
-                            adapter.notifyItemRemoved(pos);
-                            updateUI();
-                            Toast.makeText(getContext(), "已删除", Toast.LENGTH_SHORT).show();
+                            try {
+                                JsonObject res = gson.fromJson(response, JsonObject.class);
+                                if (!res.has("success") || !res.get("success").getAsBoolean()) {
+                                    String err = res.has("error") ? res.get("error").getAsString() : "删除失败";
+                                    Toast.makeText(getContext(), err, Toast.LENGTH_SHORT).show();
+                                    adapter.notifyItemChanged(pos);
+                                    return;
+                                }
+                                String deletedInput = item.inputText;
+                                historyList.remove(pos);
+                                adapter.notifyItemRemoved(pos);
+                                updateUI();
+                                Toast.makeText(getContext(), "已删除", Toast.LENGTH_SHORT).show();
+                            } catch (Exception e) {
+                                adapter.notifyItemChanged(pos);
+                                Toast.makeText(getContext(), "删除失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                            }
                         });
                     }
 
@@ -133,37 +150,11 @@ public class SearchFragment extends Fragment {
                 });
     }
 
-    private void onItemClick(SearchHistoryItem item) {
-        // 切换到监控 tab 并自动填入
-        MonitoringFragment frag = findMonitoringFragment();
-        if (frag != null) {
-            frag.setInputText(item.roomId);
-        }
-    }
-
-    private MonitoringFragment findMonitoringFragment() {
-        if (getParentFragment() != null) {
-            return (MonitoringFragment) getParentFragment().getChildFragmentManager()
-                    .findFragmentByTag("f0");
-        }
-        if (getActivity() != null) {
-            return (MonitoringFragment) getActivity().getSupportFragmentManager()
-                    .findFragmentByTag("f0");
-        }
-        return null;
-    }
-
     private void updateUI() {
         boolean empty = historyList.isEmpty();
         tvEmpty.setVisibility(empty ? View.VISIBLE : View.GONE);
         rvHistory.setVisibility(empty ? View.GONE : View.VISIBLE);
-    }
-
-    // -- Model --
-    public static class SearchHistoryItem {
-        public String roomId;
-        public String nickname;
-        public long lastSearch;
+        adapter.notifyDataSetChanged();
     }
 
     // -- RecyclerView Adapter --
@@ -180,10 +171,24 @@ public class SearchFragment extends Fragment {
         @Override
         public void onBindViewHolder(@NonNull VH h, int pos) {
             SearchHistoryItem item = historyList.get(pos);
-            h.tvRoomName.setText(item.nickname != null ? item.nickname : item.roomId);
-            h.tvRoomId.setText("ID: " + item.roomId);
-            h.tvTime.setText(sdf.format(new Date(item.lastSearch * 1000)));
-            h.itemView.setOnClickListener(v -> onItemClick(item));
+            h.tvRoomName.setText(item.getDisplayName());
+            h.tvRoomId.setText("ID: " + (item.roomId != null ? item.roomId : "-"));
+            h.tvTime.setText(sdf.format(new Date(item.createdAt * 1000)));
+            h.itemView.setOnClickListener(v -> {
+                // 切换到监控 tab - 自动填入 room_id
+                MonitoringFragment frag = findMonitoringFragment();
+                if (frag != null) {
+                    frag.setInputText(item.inputText);
+                }
+                // 切换到第一个 tab (0 = monitoring)
+                if (getActivity() instanceof com.google.android.material.bottomnavigation.BottomNavigationView) {
+                    // handled by the monitoring fragment
+                }
+                if (getActivity() != null) {
+                    androidx.viewpager2.widget.ViewPager2 vp = getActivity().findViewById(R.id.view_pager);
+                    if (vp != null) vp.setCurrentItem(0, true);
+                }
+            });
             h.itemView.setOnLongClickListener(v -> {
                 deleteItem(pos);
                 return true;
@@ -202,5 +207,13 @@ public class SearchFragment extends Fragment {
                 tvTime = v.findViewById(R.id.tv_time);
             }
         }
+    }
+
+    private MonitoringFragment findMonitoringFragment() {
+        if (getActivity() != null) {
+            return (MonitoringFragment) getActivity().getSupportFragmentManager()
+                    .findFragmentByTag("f0");
+        }
+        return null;
     }
 }

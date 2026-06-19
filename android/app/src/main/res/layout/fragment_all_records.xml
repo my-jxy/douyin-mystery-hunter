@@ -5,39 +5,14 @@
     android:layout_height="match_parent"
     android:orientation="vertical">
 
-    <!-- 搜索栏 -->
-    <LinearLayout
+    <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
         android:padding="12dp"
-        android:gravity="center_vertical">
-
-        <EditText
-            android:id="@+id/et_search"
-            android:layout_width="0dp"
-            android:layout_height="44dp"
-            android:layout_weight="1"
-            android:hint="搜索全部记录..."
-            android:textColorHint="#888888"
-            android:textColor="#FFFFFF"
-            android:background="@drawable/edit_text_bg"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:singleLine="true"
-            android:imeOptions="actionSearch"/>
-
-        <Button
-            android:id="@+id/btn_clear_search"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:layout_marginStart="4dp"
-            android:text="✕"
-            android:textSize="16sp"
-            android:visibility="gone"
-            style="@style/Widget.MaterialComponents.Button.TextButton"
-            android:textColor="#AAAAAA"/>
-    </LinearLayout>
+        android:text="有记录的直播间"
+        android:textColor="@color/accent"
+        android:textSize="16sp"
+        android:textStyle="bold"/>
 
     <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
         android:id="@+id/swipe_refresh"

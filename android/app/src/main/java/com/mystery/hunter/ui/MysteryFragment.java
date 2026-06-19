@@ -19,18 +19,24 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 import com.google.gson.Gson;
-import com.google.gson.reflect.TypeToken;
 import com.mystery.hunter.R;
 import com.mystery.hunter.api.ApiClient;
 import com.mystery.hunter.api.ApiConfig;
+import com.mystery.hunter.model.HistoryListResponse;
 import com.mystery.hunter.model.MysteryRecord;
-import java.lang.reflect.Type;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
+/**
+ * 神秘人历史记录 Fragment
+ * API: GET /api/history_all_all -> {"success": true, "records": [...], "count": N}
+ * 记录字段: sec_uid, display, real_name, extra(JSON), last_room_id, seen_room_ids,
+ *           first_seen, last_seen, enter_count, gift_count, chat_count, is_regular,
+ *           displays[...], is_current, room_nickname
+ */
 public class MysteryFragment extends Fragment {
 
     private SwipeRefreshLayout swipeRefresh;
@@ -78,16 +84,27 @@ public class MysteryFragment extends Fragment {
         return v;
     }
 
+    @Override
+    public void onResume() {
+        super.onResume();
+        loadData();
+    }
+
+    /**
+     * 加载所有历史神秘人记录
+     * GET /api/history_all_all -> {"success": true, "records": [...], "count": N}
+     */
     private void loadData() {
         ApiClient.get(ApiConfig.BASE_URL + ApiConfig.HISTORY_ALL_ALL, new ApiClient.ApiCallback() {
             @Override
             public void onSuccess(String response) {
                 mainHandler.post(() -> {
                     try {
-                        Type listType = new TypeToken<List<MysteryRecord>>() {}.getType();
-                        List<MysteryRecord> records = gson.fromJson(response, listType);
+                        HistoryListResponse resp = gson.fromJson(response, HistoryListResponse.class);
                         allRecords.clear();
-                        if (records != null) allRecords.addAll(records);
+                        if (resp.success && resp.records != null) {
+                            allRecords.addAll(resp.records);
+                        }
                         filter(etSearch.getText().toString());
                     } catch (Exception e) {
                         Toast.makeText(getContext(), "解析失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
@@ -117,7 +134,8 @@ public class MysteryFragment extends Fragment {
                         || (r.nickname != null && r.nickname.toLowerCase().contains(q))
                         || (r.realName != null && r.realName.toLowerCase().contains(q))
                         || (r.secUid != null && r.secUid.toLowerCase().contains(q))
-                        || (r.display != null && r.display.toLowerCase().contains(q))) {
+                        || (r.display != null && r.display.toLowerCase().contains(q))
+                        || (r.roomNickname != null && r.roomNickname.toLowerCase().contains(q))) {
                     filteredRecords.add(r);
                 }
             }
@@ -144,10 +162,13 @@ public class MysteryFragment extends Fragment {
         public void onBindViewHolder(@NonNull VH h, int pos) {
             MysteryRecord r = filteredRecords.get(pos);
             h.tvDisplay.setText(r.getDisplayName());
-            h.tvNick.setText("@" + (r.nickname != null ? r.nickname : "-"));
-            h.tvSeen.setText("出现 " + (r.enterCount) + " 次");
-            h.tvFirst.setText("首次: " + sdf.format(new Date(r.firstSeen * 1000)));
-            h.tvLast.setText("最近: " + sdf.format(new Date(r.lastSeen * 1000)));
+            h.tvNick.setText("@" + (r.nickname != null && !r.nickname.isEmpty() ? r.nickname : "-")
+                    + (r.isRegularUser() ? "  ✓常客" : "  🔍神秘人"));
+
+            long totalEntries = r.enterCount + (r.displays != null ? r.displays.size() : 0);
+            h.tvSeen.setText("出现 " + totalEntries + " 次");
+            h.tvFirst.setText("首次: " + (r.firstSeen > 0 ? sdf.format(new Date(r.firstSeen * 1000)) : "-"));
+            h.tvLast.setText("最近: " + (r.lastSeen > 0 ? sdf.format(new Date(r.lastSeen * 1000)) : "-"));
 
             // 点击展开详情
             h.itemView.setOnClickListener(v -> {
@@ -158,7 +179,10 @@ public class MysteryFragment extends Fragment {
             h.tvDetailEnter.setText("进场: " + r.enterCount);
             h.tvDetailGift.setText("送礼: " + r.giftCount);
             h.tvDetailChat.setText("发言: " + r.chatCount);
-            h.tvDetailRooms.setText("出现房间: " + (r.seenRoomIds != null ? r.seenRoomIds : "-"));
+            h.tvDetailRooms.setText("出现房间: " + (r.lastRoomId != null && !r.lastRoomId.isEmpty() ? r.lastRoomId : "-"));
+            if (r.roomNickname != null && !r.roomNickname.isEmpty()) {
+                h.tvDetailRooms.append(" (" + r.roomNickname + ")");
+            }
             h.detailLayout.setVisibility(View.GONE);
         }
 
@@ -169,6 +193,7 @@ public class MysteryFragment extends Fragment {
             TextView tvDisplay, tvNick, tvSeen, tvFirst, tvLast;
             TextView tvDetailEnter, tvDetailGift, tvDetailChat, tvDetailRooms;
             View detailLayout;
+
             VH(View v) {
                 super(v);
                 tvDisplay = v.findViewById(R.id.tv_display);
