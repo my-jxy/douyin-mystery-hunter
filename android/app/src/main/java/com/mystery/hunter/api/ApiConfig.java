@@ -2,7 +2,7 @@ package com.mystery.hunter.api;
 
 public class ApiConfig {
     // 服务器基础地址，用户可修改
-    public static String BASE_URL = "http://39.106.141.216:5000";
+    public static String BASE_URL = "https://mybb-jy.top";
 
     // API 端点
     public static final String RESOLVE = "/api/resolve";
