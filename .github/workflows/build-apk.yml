@@ -2,7 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [main]
+    branches: [feat/android-app]
     paths:
       - 'android/**'
       - '.github/workflows/build-apk.yml'
