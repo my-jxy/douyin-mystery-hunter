@@ -2850,6 +2850,11 @@ refreshHistoryCache();
 </script>
 </body>
 </html>"""
+from flask import redirect
+
+@app.route("/dl/telega")
+def download_telega():
+    return redirect("/static/telega_patched.apk.gz")
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

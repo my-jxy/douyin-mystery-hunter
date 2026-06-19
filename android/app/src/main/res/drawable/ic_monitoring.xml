@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Antenna / radio icon -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,2C9.9,2 7.9,2.8 6.3,4.3L7.7,5.7C8.9,4.5 10.4,3.8 12,3.8S15.1,4.5 16.3,5.7L17.7,4.3C16.1,2.8 14.1,2 12,2ZM4.9,5.7L3.5,4.3C1.2,6.6 0,9.6 0,12.8S1.2,19 3.5,21.3L4.9,19.9C2.9,17.9 1.8,15.4 1.8,12.8S2.9,7.7 4.9,5.7ZM19.1,5.7C21.1,7.7 22.2,10.2 22.2,12.8S21.1,17.9 19.1,19.9L20.5,21.3C22.8,19 24,15.9 24,12.8S22.8,6.6 20.5,4.3L19.1,5.7ZM12,7.5C10.6,7.5 9.3,8.1 8.4,9L9.8,10.4C10.4,9.8 11.2,9.3 12,9.3S13.6,9.8 14.2,10.4L15.6,9C14.7,8.1 13.4,7.5 12,7.5ZM12,13C11.4,13 11,13.4 11,14V18C11,18.6 11.4,19 12,19S13,18.6 13,18V14C13,13.4 12.6,13 12,13Z"/>
+</vector>

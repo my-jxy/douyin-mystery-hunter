@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- Target / crosshair icon -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,4C13,4 4,13 4,24S13,44 24,44S44,35 44,24S35,4 24,4ZM24,7C33.4,7 41,14.6 41,24S33.4,41 24,41S7,33.4 7,24S14.6,7 24,7ZM24,11C16.8,11 11,16.8 11,24S16.8,37 24,37S37,31.2 37,24S31.2,11 24,11ZM24,15C29,15 33,19 33,24S29,33 24,33S15,29 15,24S19,15 24,15ZM24,21C22.3,21 21,22.3 21,24S22.3,27 24,27S27,25.7 27,24S25.7,21 24,21Z"/>
+</vector>

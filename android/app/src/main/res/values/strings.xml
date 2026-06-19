@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">神秘人猎人</string>
+    <string name="tab_monitoring">监听</string>
+    <string name="tab_mystery">神秘人</string>
+    <string name="tab_all_records">全部记录</string>
+    <string name="tab_search">历史</string>
+    <string name="floating_notification_title">神秘人猎人正在运行</string>
+    <string name="floating_notification_text">正在监控直播间…</string>
+    <string name="channel_name">神秘人猎人服务</string>
+    <string name="channel_desc">前台服务通知渠道</string>
+    <string name="permission_overlay_required">需要悬浮窗权限才能使用悬浮窗功能</string>
+    <string name="go_to_settings">去设置</string>
+    <string name="cancel">取消</string>
+    <string name="start_monitoring">开始监听</string>
+    <string name="stop_monitoring">停止</string>
+    <string name="stop_all">停止全部</string>
+</resources>

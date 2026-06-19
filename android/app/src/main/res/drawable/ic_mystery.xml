@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Mystery person / ghost icon -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,2C9.2,2 7,4.2 7,7V11C7,12.1 7.9,13 9,13H15C16.1,13 17,12.1 17,11V7C17,4.2 14.8,2 12,2ZM12,4C13.7,4 15,5.3 15,7V11H9V7C9,5.3 10.3,4 12,4ZM9,14C7.3,14 6,15.3 6,17V18H8V17C8,16.4 8.4,16 9,16H15C15.6,16 16,16.4 16,17V18H18V17C18,15.3 16.7,14 15,14H9Z"/>
+</vector>

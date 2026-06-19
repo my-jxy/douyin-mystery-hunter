@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/nav_monitoring"
+        android:icon="@drawable/ic_monitoring"
+        android:title="@string/tab_monitoring"/>
+    <item
+        android:id="@+id/nav_mystery"
+        android:icon="@drawable/ic_mystery"
+        android:title="@string/tab_mystery"/>
+    <item
+        android:id="@+id/nav_all_records"
+        android:icon="@drawable/ic_records"
+        android:title="@string/tab_all_records"/>
+    <item
+        android:id="@+id/nav_search"
+        android:icon="@drawable/ic_search"
+        android:title="@string/tab_search"/>
+</menu>
