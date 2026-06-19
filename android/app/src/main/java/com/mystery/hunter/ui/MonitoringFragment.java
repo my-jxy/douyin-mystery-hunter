@@ -85,7 +85,7 @@ public class MonitoringFragment extends Fragment {
                 mainHandler.post(() -> {
                     try {
                         JsonObject obj = gson.fromJson(response, JsonObject.class);
-                        JsonArray rooms = obj.getAsJsonArray("rooms");
+                        JsonArray rooms = obj.has("rooms") ? obj.getAsJsonArray("rooms") : obj.getAsJsonArray("active");
                         Type listType = new TypeToken<List<RoomStatus>>() {}.getType();
                         List<RoomStatus> newList = gson.fromJson(rooms, listType);
                         roomList.clear();
@@ -131,6 +131,11 @@ public class MonitoringFragment extends Fragment {
                 mainHandler.post(() -> {
                     try {
                         JsonObject res = gson.fromJson(response, JsonObject.class);
+                        if (res.has("success") && !res.get("success").getAsBoolean()) {
+                            String error = res.has("error") ? res.get("error").getAsString() : "未知错误";
+                            Toast.makeText(getContext(), "解析失败: " + error, Toast.LENGTH_SHORT).show();
+                            return;
+                        }
                         String roomId = res.get("room_id").getAsString();
 
                         // 再 start

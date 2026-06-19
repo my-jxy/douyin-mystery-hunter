@@ -79,7 +79,7 @@ public class MysteryFragment extends Fragment {
     }
 
     private void loadData() {
-        ApiClient.get(ApiConfig.BASE_URL + ApiConfig.HISTORY_ALL, new ApiClient.ApiCallback() {
+        ApiClient.get(ApiConfig.BASE_URL + ApiConfig.HISTORY_ALL_ALL, new ApiClient.ApiCallback() {
             @Override
             public void onSuccess(String response) {
                 mainHandler.post(() -> {
