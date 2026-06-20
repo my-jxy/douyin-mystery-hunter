@@ -605,12 +605,6 @@ class RoomListener:
                                         info['room_id'] = self.room_id
                                         info['room_nickname'] = self.nickname
                                         self.send_event('mystery_enter', info)
-                                    if _record_all_enabled and info.get('sec_uid'):
-                                        info['room_id'] = self.room_id
-                                        info['room_nickname'] = self.nickname
-                                        rec = info.copy()
-                                        rec['event_type'] = 'enter'
-                                        self._write_all_user(rec)
                                 elif _record_all_enabled:
                                     # 私密直播间：用缓存补全真实名
                                     if extra and extra.get('nickname'):
@@ -673,12 +667,6 @@ class RoomListener:
                                         _save_mystery_record(self.room_id, user.sec_uid or '', display, real_name, extra, 'chat', room_nickname=self.nickname, is_private=self.is_private)
                                         _save_interaction(self.room_id, user.sec_uid or '', display, 'chat', content=msg.content)
                                         self.send_event('mystery_chat', chat_info)
-                                    if _record_all_enabled and chat_info.get('sec_uid'):
-                                        chat_info['room_id'] = self.room_id
-                                        chat_info['room_nickname'] = self.nickname
-                                        rec = chat_info.copy()
-                                        rec['event_type'] = 'chat'
-                                        self._write_all_user(rec)
                                 elif _record_all_enabled:
                                     # 私密直播间：用缓存补全真实名
                                     if extra and extra.get('nickname'):
