@@ -18,7 +18,7 @@
   <div class="hint">支持：抖音号 · 直播间链接 · 主页链接</div>
   <div class="status-bar" id="statusBar">
     <span><span class="dot gray" id="dot"></span><span id="statusText">未连接</span></span>
-    <span><span id="statsText" class="stats-text" style="margin-right:4px"></span><span class="mode-btn active" id="modeMystery" onclick="switchMode('mystery')">🎯神秘人</span><span class="mode-btn" id="modeAll" onclick="switchMode('all')">📋全部</span><span class="mode-btn" id="modeHistory" onclick="switchMode('history')">📜历史</span></span>
+    <span><span id="statsText" class="stats-text" style="margin-right:4px"></span><span class="mode-btn active" id="modeMystery" onclick="switchMode('mystery')">🎯神秘人</span><span class="mode-btn" id="modeAll" onclick="switchMode('all')">📋全部</span><span class="mode-btn" id="modeHistory" onclick="switchMode('history')">📜历史</span><span class="mode-btn" id="modeFeed" onclick="switchMode('feed')">📺公屏</span></span>
   </div>
   <div class="anonymous-banner" id="anonymousBanner">
     <span class="icon">🕵️</span><span id="anonymousMsg"></span>
@@ -26,6 +26,7 @@
   <div class="events" id="events">
     <div class="empty"><div class="icon">🎯</div>输入抖音号或链接<br>点击「监听」开始</div>
   </div>
+  <div id="feedContainer" class="feed-container" style="display:none"></div>
 </div>
 <script src="/static/app.js"></script>
 </body>

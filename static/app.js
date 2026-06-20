@@ -227,7 +227,8 @@ function switchView(view) {
 function switchMode(mode) {
   const allBtn = document.getElementById('modeAll')
   const hisBtn = document.getElementById('modeHistory')
-  // 已在全部/历史模式下再次点击 → 刷新
+  const feedBtn = document.getElementById('modeFeed')
+  // 已在全部/历史/公屏模式下再次点击 → 刷新
   if (mode === 'all' && currentView === 'all') {
     renderAllRecords()
     return
@@ -236,15 +237,33 @@ function switchMode(mode) {
     renderHistory()
     return
   }
+  if (mode === 'feed' && currentView === 'feed') {
+    loadFeed()
+    return
+  }
   currentView = mode
   const isAll = mode === 'all'
   const isHis = mode === 'history'
+  const isFeed = mode === 'feed'
   // 更新按钮状态
   document.getElementById('modeMystery').className = 'mode-btn' + (mode === 'mystery' ? ' active' : '')
   allBtn.className = 'mode-btn' + (isAll ? ' active' : '')
   hisBtn.className = 'mode-btn' + (isHis ? ' active' : '')
+  if (feedBtn) feedBtn.className = 'mode-btn' + (isFeed ? ' active' : '')
   allBtn.textContent = isAll ? '刷新' : '📋全部'
   hisBtn.textContent = isHis ? '刷新' : '📜历史'
+  // 切换容器显示
+  const eventsEl = document.getElementById('events')
+  const feedEl = document.getElementById('feedContainer')
+  if (isFeed) {
+    eventsEl.style.display = 'none'
+    if (feedEl) feedEl.style.display = ''
+    loadFeed()
+    return
+  } else {
+    eventsEl.style.display = ''
+    if (feedEl) feedEl.style.display = 'none'
+  }
   // 通知后端：全部用户模式才开启录制
   fetch('/api/toggle_record_all', {
     method: 'POST',
@@ -423,6 +442,7 @@ function handleEvent(event, roomId) {
         }
       }
       if (currentView !== 'all') renderSingleCard(mKey(d))
+      if (currentView === 'feed') appendFeedItem(event)
       break
     case 'mystery_chat':
       if (!mysteries[mKey(d)]) {
@@ -444,6 +464,7 @@ function handleEvent(event, roomId) {
       }
       mysteries[mKey(d)].chats.push({content: d.content, time: Date.now()})
       if (currentView !== 'all') renderSingleCard(mKey(d))
+      if (currentView === 'feed') appendFeedItem(event)
       break
     case 'mystery_gift':
       if (!mysteries[mKey(d)]) {
@@ -470,6 +491,7 @@ function handleEvent(event, roomId) {
       }
       mysteries[mKey(d)].gifts.push({name: d.gift_name, count: d.count, time: Date.now()})
       if (currentView !== 'all') renderSingleCard(mKey(d))
+      if (currentView === 'feed') appendFeedItem(event)
       break
     case 'room_offline':
       setStatus('已断开', 'red')
@@ -1052,6 +1074,124 @@ function loadAllActions(uid, roomId) {
     .catch(function() {
       actDiv.innerHTML = '<div style="color:#fe2c55;font-size:11px">加载失败</div>'
     })
+}
+
+// ========== 公屏模式 ==========
+
+function loadFeed() {
+  const container = document.getElementById('feedContainer')
+  const roomIds = Object.keys(currentRooms)
+  if (roomIds.length === 0) {
+    container.innerHTML = '<div class="feed-empty"><div class="icon">📺</div>开始监听后自动显示<br><span style="font-size:11px;color:#666">公屏时间线</span></div>'
+    return
+  }
+  container.innerHTML = '<div class="feed-empty"><div class="icon">⏳</div>加载中...</div>'
+
+  Promise.all(roomIds.map(rid =>
+    fetch('/api/feed/' + encodeURIComponent(rid) + '?limit=200').then(r => r.json())
+  )).then(results => {
+    const allEvents = []
+    results.forEach(res => {
+      if (res.success && res.events) {
+        res.events.forEach(ev => allEvents.push(ev))
+      }
+    })
+    allEvents.sort((a, b) => a.timestamp - b.timestamp)
+    // 限制总数
+    const merged = allEvents.slice(0, 200)
+    renderFeed(merged)
+  }).catch(() => {
+    container.innerHTML = '<div class="feed-empty" style="color:#fe2c55">加载失败</div>'
+  })
+}
+
+function renderFeed(events) {
+  const container = document.getElementById('feedContainer')
+  if (!events || events.length === 0) {
+    container.innerHTML = '<div class="feed-empty"><div class="icon">📺</div>暂无互动记录</div>'
+    return
+  }
+  let html = ''
+  events.forEach(ev => {
+    const timeStr = formatTime(ev.timestamp)
+    const name = escapeHtml(ev.real_name || ev.display || '?')
+    const typeClass = ev.type === 'enter' ? 'feed-enter' : ev.type === 'chat' ? 'feed-chat' : 'feed-gift'
+    let icon, bodyHtml
+    if (ev.type === 'enter') {
+      icon = '🚪'
+      bodyHtml = `<span class="feed-name">${name}</span> 进入了直播间`
+    } else if (ev.type === 'chat') {
+      const content = escapeHtml(ev.content || '')
+      icon = '💬'
+      bodyHtml = `<span class="feed-name">${name}</span><span class="feed-content">: ${content}</span>`
+    } else {
+      const giftName = escapeHtml(ev.content || '?')
+      const cnt = ev.count || 1
+      icon = '🎁'
+      bodyHtml = `<span class="feed-name">${name}</span> 送了 <span class="feed-count">${cnt}个${giftName}</span>`
+    }
+    html += `<div class="feed-item ${typeClass}">`
+    html += `<span class="feed-icon">${icon}</span>`
+    html += `<div class="feed-body">${bodyHtml}</div>`
+    html += `<span class="feed-time">${timeStr}</span>`
+    html += `</div>`
+  })
+  container.innerHTML = html
+  // 自动滚动到底部
+  container.scrollTop = container.scrollHeight
+}
+
+function appendFeedItem(event) {
+  const container = document.getElementById('feedContainer')
+  if (!container) return
+
+  // 如果容器是空状态，先清空
+  if (container.querySelector('.feed-empty')) {
+    container.innerHTML = ''
+  }
+
+  const d = event.data || event
+  const timeStr = formatTime(d.timestamp || Math.floor(Date.now() / 1000))
+  const name = escapeHtml(d.display || d.real_name || '?')
+  const typeClass = event.type === 'mystery_enter' ? 'feed-enter' : event.type === 'mystery_chat' ? 'feed-chat' : 'feed-gift'
+  let icon, bodyHtml
+  if (event.type === 'mystery_enter') {
+    icon = '🚪'
+    bodyHtml = `<span class="feed-name">${name}</span> 进入了直播间`
+  } else if (event.type === 'mystery_chat') {
+    const content = escapeHtml(d.content || '')
+    icon = '💬'
+    bodyHtml = `<span class="feed-name">${name}</span><span class="feed-content">: ${content}</span>`
+  } else if (event.type === 'mystery_gift') {
+    const giftName = escapeHtml(d.gift_name || d.content || '?')
+    const cnt = d.count || 1
+    icon = '🎁'
+    bodyHtml = `<span class="feed-name">${name}</span> 送了 <span class="feed-count">${cnt}个${giftName}</span>`
+  } else {
+    return
+  }
+
+  const item = document.createElement('div')
+  item.className = 'feed-item ' + typeClass
+  item.innerHTML = `<span class="feed-icon">${icon}</span><div class="feed-body">${bodyHtml}</div><span class="feed-time">${timeStr}</span>`
+  container.appendChild(item)
+
+  // 超过 500 条时丢弃最早的
+  while (container.children.length > 500) {
+    container.removeChild(container.firstChild)
+  }
+
+  // 自动滚动到底部（除非用户手动滚上去查看历史）
+  const isScrolledUp = container.scrollTop + container.clientHeight < container.scrollHeight - 60
+  if (!isScrolledUp) {
+    container.scrollTop = container.scrollHeight
+  }
+}
+
+function formatTime(ts) {
+  if (!ts) return ''
+  const d = new Date(ts * 1000)
+  return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
 function toggleExpand(secUid) {

@@ -1400,6 +1400,70 @@ def stream(room_id):
 
 
 
+@app.route('/api/feed/<room_id>')
+def feed_events(room_id):
+    """返回某个直播间的互动时间线（公屏用）"""
+    limit = request.args.get('limit', default=200, type=int)
+
+    events = []
+
+    try:
+        conn = sqlite3.connect(_DB_PATH)
+        conn.row_factory = sqlite3.Row
+
+        # 1. 从 interaction_log 取 chat + gift 事件
+        cur = conn.execute('''
+            SELECT sec_uid, display, type, content, gift_count, timestamp
+            FROM interaction_log
+            WHERE room_id = ?
+            ORDER BY timestamp ASC
+        ''', (room_id,))
+
+        for r in cur.fetchall():
+            events.append({
+                'type': r['type'],
+                'display': r['display'] or '',
+                'real_name': r['display'] or '',
+                'content': r['content'] or '',
+                'count': r['gift_count'] or 1,
+                'timestamp': r['timestamp'],
+                'sec_uid': r['sec_uid'] or '',
+            })
+
+        # 2. 从 mystery_records 生成 enter 事件
+        cur2 = conn.execute('''
+            SELECT sec_uid, display, real_name, first_seen, enter_count, seen_room_ids
+            FROM mystery_records
+            WHERE enter_count > 0
+            ORDER BY first_seen ASC
+        ''')
+
+        for r in cur2.fetchall():
+            seen = (r['seen_room_ids'] or '').split(',')
+            if str(room_id) in seen:
+                real_name = r['real_name'] or r['display'] or ''
+                events.append({
+                    'type': 'enter',
+                    'display': r['display'] or '',
+                    'real_name': real_name,
+                    'content': '',
+                    'count': r['enter_count'],
+                    'timestamp': r['first_seen'],
+                    'sec_uid': r['sec_uid'] or '',
+                })
+
+        conn.close()
+
+        # 3. 合并、按 timestamp 排序、限制 limit 条
+        events.sort(key=lambda x: x['timestamp'])
+        events = events[:limit]
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+    return jsonify({'success': True, 'events': events, 'count': len(events)})
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, threaded=True, debug=False, use_reloader=True)
