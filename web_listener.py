@@ -620,6 +620,7 @@ class RoomListener:
                                     info['room_id'] = self.room_id
                                     info['room_nickname'] = self.nickname
                                     self._write_all_user(info)
+                                    self.send_event('mystery_enter', info)
 
                             elif item.method == 'WebcastChatMessage':
                                 # 匿名模式：跳过聊天事件，只等礼物
@@ -686,6 +687,7 @@ class RoomListener:
                                     chat_info['room_nickname'] = self.nickname
                                     self._write_all_user(chat_info)
                                     _save_interaction(self.room_id, user.sec_uid or '', display, 'chat', content=msg.content)
+                                    self.send_event('mystery_chat', chat_info)
 
                             elif item.method == 'WebcastGiftMessage':
                                 try:
@@ -748,6 +750,7 @@ class RoomListener:
                                             gift_info['room_nickname'] = self.nickname
                                             self._write_all_user(gift_info)
                                             _save_interaction(self.room_id, user.sec_uid or '', display, 'gift', content=msg.gift.name if msg.gift else '?', gift_count=msg.comboCount)
+                                            self.send_event('mystery_gift', gift_info)
                                 except Exception:
                                     pass
 
@@ -1466,4 +1469,5 @@ def feed_events(room_id):
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
+    app.config['TEMPLATES_AUTO_RELOAD'] = True
     app.run(host='0.0.0.0', port=port, threaded=True, debug=False, use_reloader=True)

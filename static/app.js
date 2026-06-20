@@ -265,11 +265,13 @@ function switchMode(mode) {
     if (feedEl) feedEl.style.display = 'none'
   }
   // 通知后端：全部用户模式才开启录制
-  fetch('/api/toggle_record_all', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({enabled: isAll})
-  })
+  if (isAll) {
+    fetch('/api/toggle_record_all', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled: true})
+    })
+  }
   if (isHis) {
     renderHistory()
   } else if (isAll) {
@@ -357,7 +359,7 @@ function connectSSE(roomId) {
     try {
       const event = JSON.parse(e.data)
       handleEvent(event, roomId)
-    } catch(err) {}
+    } catch(err) { console.warn('[SSE] parse/handle error:', err) }
   }
   es.onerror = function() {
     if (disconnectTimers[roomId]) return
@@ -441,7 +443,9 @@ function handleEvent(event, roomId) {
           is_regular: d.is_regular || false
         }
       }
-      if (currentView !== 'all') renderSingleCard(mKey(d))
+      // 调试：公屏事件计数器
+      document.title = '📡' + new Date().toLocaleTimeString() + ' ' + (d.display || '?').slice(0,12) + ' | 神秘人猎人'
+      if (currentView !== 'all' && !d.is_regular) renderSingleCard(mKey(d))
       if (currentView === 'feed') appendFeedItem(event)
       break
     case 'mystery_chat':
@@ -463,7 +467,8 @@ function handleEvent(event, roomId) {
         }
       }
       mysteries[mKey(d)].chats.push({content: d.content, time: Date.now()})
-      if (currentView !== 'all') renderSingleCard(mKey(d))
+      document.title = '💬' + new Date().toLocaleTimeString() + ' ' + (d.display || '?').slice(0,12) + ' | 神秘人猎人'
+      if (currentView !== 'all' && !d.is_regular) renderSingleCard(mKey(d))
       if (currentView === 'feed') appendFeedItem(event)
       break
     case 'mystery_gift':
@@ -490,7 +495,8 @@ function handleEvent(event, roomId) {
         }
       }
       mysteries[mKey(d)].gifts.push({name: d.gift_name, count: d.count, time: Date.now()})
-      if (currentView !== 'all') renderSingleCard(mKey(d))
+      document.title = '🎁' + new Date().toLocaleTimeString() + ' ' + (d.display || '?').slice(0,12) + ' | 神秘人猎人'
+      if (currentView !== 'all' && !d.is_regular) renderSingleCard(mKey(d))
       if (currentView === 'feed') appendFeedItem(event)
       break
     case 'room_offline':
@@ -1082,7 +1088,7 @@ function loadFeed() {
   const container = document.getElementById('feedContainer')
   const roomIds = Object.keys(currentRooms)
   if (roomIds.length === 0) {
-    container.innerHTML = '<div class="feed-empty"><div class="icon">📺</div>开始监听后自动显示<br><span style="font-size:11px;color:#666">公屏时间线</span></div>'
+    container.innerHTML = '<div class="feed-empty"><div class="icon">🖥</div>开始监听后自动显示<br><span style="font-size:11px;color:#666">公屏时间线</span></div>'
     return
   }
   container.innerHTML = '<div class="feed-empty"><div class="icon">⏳</div>加载中...</div>'
@@ -1097,7 +1103,6 @@ function loadFeed() {
       }
     })
     allEvents.sort((a, b) => a.timestamp - b.timestamp)
-    // 限制总数
     const merged = allEvents.slice(0, 200)
     renderFeed(merged)
   }).catch(() => {
@@ -1108,7 +1113,7 @@ function loadFeed() {
 function renderFeed(events) {
   const container = document.getElementById('feedContainer')
   if (!events || events.length === 0) {
-    container.innerHTML = '<div class="feed-empty"><div class="icon">📺</div>暂无互动记录</div>'
+    container.innerHTML = '<div class="feed-empty"><div class="icon">🖥</div>暂无互动记录</div>'
     return
   }
   let html = ''
@@ -1142,50 +1147,53 @@ function renderFeed(events) {
 }
 
 function appendFeedItem(event) {
+  try {
   const container = document.getElementById('feedContainer')
   if (!container) return
 
-  // 如果容器是空状态，先清空
-  if (container.querySelector('.feed-empty')) {
-    container.innerHTML = ''
-  }
-
   const d = event.data || event
   const timeStr = formatTime(d.timestamp || Math.floor(Date.now() / 1000))
-  const name = escapeHtml(d.display || d.real_name || '?')
-  const typeClass = event.type === 'mystery_enter' ? 'feed-enter' : event.type === 'mystery_chat' ? 'feed-chat' : 'feed-gift'
-  let icon, bodyHtml
+  const name = escapeHtml(d.real_name || d.display || '?')
+
+  let icon, bodyHtml, typeClass
   if (event.type === 'mystery_enter') {
-    icon = '🚪'
+    typeClass = 'feed-enter'; icon = '🚪'
     bodyHtml = `<span class="feed-name">${name}</span> 进入了直播间`
   } else if (event.type === 'mystery_chat') {
-    const content = escapeHtml(d.content || '')
-    icon = '💬'
-    bodyHtml = `<span class="feed-name">${name}</span><span class="feed-content">: ${content}</span>`
+    typeClass = 'feed-chat'; icon = '💬'
+    bodyHtml = `<span class="feed-name">${name}</span><span class="feed-content">: ${escapeHtml(d.content || '')}</span>`
   } else if (event.type === 'mystery_gift') {
+    typeClass = 'feed-gift'; icon = '🎁'
     const giftName = escapeHtml(d.gift_name || d.content || '?')
-    const cnt = d.count || 1
-    icon = '🎁'
-    bodyHtml = `<span class="feed-name">${name}</span> 送了 <span class="feed-count">${cnt}个${giftName}</span>`
+    bodyHtml = `<span class="feed-name">${name}</span> 送了 <span class="feed-count">${d.count || 1}个${giftName}</span>`
   } else {
     return
   }
 
-  const item = document.createElement('div')
-  item.className = 'feed-item ' + typeClass
-  item.innerHTML = `<span class="feed-icon">${icon}</span><div class="feed-body">${bodyHtml}</div><span class="feed-time">${timeStr}</span>`
-  container.appendChild(item)
+  // 移除空状态占位
+  if (container.querySelector('.feed-empty')) {
+    container.innerHTML = ''
+  }
+
+  // 直接 insertAdjacentHTML，不做 DOM 创建
+  container.insertAdjacentHTML('beforeend',
+    `<div class="feed-item ${typeClass}">` +
+    `<span class="feed-icon">${icon}</span>` +
+    `<div class="feed-body">${bodyHtml}</div>` +
+    `<span class="feed-time">${timeStr}</span></div>`
+  )
 
   // 超过 500 条时丢弃最早的
   while (container.children.length > 500) {
     container.removeChild(container.firstChild)
   }
 
-  // 自动滚动到底部（除非用户手动滚上去查看历史）
+  // 自动滚动到底部
   const isScrolledUp = container.scrollTop + container.clientHeight < container.scrollHeight - 60
   if (!isScrolledUp) {
     container.scrollTop = container.scrollHeight
   }
+  } catch(e) { console.warn('[FEED] appendFeedItem error:', e) }
 }
 
 function formatTime(ts) {

@@ -140,7 +140,7 @@ h1{font-size:26px;text-align:center;padding:12px 0 8px;background:linear-gradien
 .feed-container::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
 .feed-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
   padding: 6px 12px;
   border-bottom: 1px solid rgba(255,255,255,0.03);
@@ -207,3 +207,11 @@ h1{font-size:26px;text-align:center;padding:12px 0 8px;background:linear-gradien
   font-size: 14px;
 }
 .feed-empty .icon { font-size: 40px; margin-bottom: 12px; }
+
+/* 手机端缩小按钮 */
+@media (max-width: 480px) {
+  .status-bar { font-size: 12px; padding: 8px 10px; }
+  .mode-btn { font-size: 11px; padding: 3px 7px; margin-left: 3px; }
+  .stats-text { min-width: 40px; font-size: 11px; }
+  .status-bar .dot { width: 7px; height: 7px; margin-right: 5px; }
+}
