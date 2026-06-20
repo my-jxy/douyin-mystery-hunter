@@ -695,16 +695,17 @@ class RoomListener:
                                     msg.ParseFromString(item.payload)
                                     user = msg.user
                                     is_mystery, display, real_name, mm = is_real_mystery_user(user)
-                                    # 仅隐私直播间：送礼时查 API 获取真实名
+                                    # 送礼时查 API 获取真实名
                                     extra = None
-                                    if self.is_private and user.sec_uid:
+                                    if user.sec_uid:
                                         extra = lookup_user(user.sec_uid)
                                         if extra and extra.get('nickname'):
-                                            print(f"[CACHE] 缓存写入: room={self.room_id} display={display} -> {extra.get('nickname','?')}", flush=True)
+                                            if self.is_private:
+                                                print(f"[CACHE] 缓存写入: room={self.room_id} display={display} -> {extra.get('nickname','?')}", flush=True)
+                                                extra['sec_uid'] = user.sec_uid
+                                                _private_name_cache[f"{self.room_id}:{display}"] = extra
                                             if extra.get('nickname') != real_name:
                                                 real_name = extra['nickname']
-                                            extra['sec_uid'] = user.sec_uid
-                                            _private_name_cache[f"{self.room_id}:{display}"] = extra
                                     if is_mystery:
                                         if extra and extra.get('nickname') and extra['nickname'] == display:
                                             is_mystery = False

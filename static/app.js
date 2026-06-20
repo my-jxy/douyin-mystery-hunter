@@ -6,6 +6,7 @@ let recordAllEnabled = false  // 是否记录全部用户
 let currentView = 'mystery'   // 'mystery' 或 'all'
 let lastRoomId = null         // 最近监听的房间，用于按钮切换停止
 let historyCache = []          // 搜索历史缓存（预加载零延迟）
+let selectedRoomId = null      // 当前选中的房间ID，null=显示全部
 
 function escapeHtml(text) {
   const d = document.createElement('div')
@@ -281,6 +282,55 @@ function switchMode(mode) {
   }
 }
 
+// ========== 房间筛选 ==========
+
+function selectRoom(roomId) {
+  selectedRoomId = roomId
+  updateRoomSelector()
+  // 重渲染当前tab
+  if (currentView === 'mystery') renderMysteries()
+  else if (currentView === 'all') renderAllRecords()
+  else if (currentView === 'history') renderHistory()
+  else if (currentView === 'feed') loadFeed()
+}
+
+function updateRoomSelector() {
+  const selector = document.getElementById('roomSelector')
+  const rooms = Object.keys(currentRooms)
+  const roomColors = ['#fe2c55', '#5ac8fa', '#34c759']
+  const roomMap = {}; let ci = 0
+  rooms.forEach(rid => { roomMap[rid] = ci++ % 3 })
+
+  if (rooms.length === 0) {
+    selector.innerHTML = ''
+    return
+  }
+
+  let html = ''
+  rooms.forEach(rid => {
+    const nick = currentRooms[rid]?.nickname || rid
+    const shortName = nick
+    const color = roomColors[roomMap[rid] % 3]
+    const isActive = selectedRoomId === rid
+    const borderStyle = isActive ? `box-shadow:0 0 10px ${color}50,0 0 25px ${color}20;border-color:${color}80;` : ''
+    html += `<span class="room-filter-btn${isActive ? ' active' : ''}" data-rid="${rid}" style="${borderStyle}" onclick="selectRoom('${rid}')">`
+    html += `<span class="room-filter-dot" style="background:${color}"></span>`
+    html += `<span class="room-filter-name">${escapeHtml(shortName)}</span>`
+    html += `</span>`
+  })
+  selector.innerHTML = html
+}
+
+/* ---- 头部紧凑模式 ---- */
+function updateHeaderState() {
+  const header = document.getElementById('headerArea')
+  if (Object.keys(currentRooms).length > 0) {
+    header.classList.add('monitoring')
+  } else {
+    header.classList.remove('monitoring')
+  }
+}
+
 function showToast(msg) {
   const el = document.getElementById('events')
   // 只在没有任何神秘人时显示toast
@@ -311,6 +361,9 @@ function startListening(roomId, nickname) {
       document.getElementById('input').value = ''
       resetBtnText()
       connectSSE(roomId)
+      updateRoomSelector()
+      updateHeaderState()
+      selectRoom(roomId)
     } else {
       showToast('❌ ' + (data.error || '启动失败'))
       document.getElementById('btn').disabled = false
@@ -475,7 +528,7 @@ function handleEvent(event, roomId) {
       if (!mysteries[mKey(d)]) {
         mysteries[mKey(d)] = {
           display: d.display, real_name: d.real_name,
-          sec_uid: d.sec_uid, unique_id: '',
+          sec_uid: d.sec_uid, unique_id: d.unique_id || d.extra?.unique_id || '',
           badge_level: d.badge_level || 0, consume_level: d.consume_level || 0,
           extra: null, chats: [], gifts: [], aliases: [],
           time: Date.now(), expanded: false,
@@ -516,7 +569,9 @@ function renderMysteries() {
   const mysteryOnly = currentView === 'mystery'
   const keys = Object.keys(mysteries)
   const filtered = mysteryOnly ? keys.filter(k => !mysteries[k].is_regular) : keys
-  if (filtered.length === 0) {
+  // 房间筛选
+  const roomFiltered = selectedRoomId ? filtered.filter(k => mysteries[k].room_id === selectedRoomId) : filtered
+  if (roomFiltered.length === 0) {
     container.innerHTML = '<div class="empty"><div class="icon">🎯</div>暂无数据</div>'
     return
   }
@@ -526,7 +581,7 @@ function renderMysteries() {
   Object.keys(currentRooms).forEach(rid => { roomMap[rid] = ci++ % 3 })
 
   let html = ''
-  const sorted = filtered.sort((a, b) => mysteries[b].time - mysteries[a].time)
+  const sorted = roomFiltered.sort((a, b) => mysteries[b].time - mysteries[a].time)
   sorted.forEach((secUid, idx) => {
     const m = mysteries[secUid]
     const isRegular = m.is_regular || false
@@ -596,6 +651,8 @@ function renderMysteries() {
 function renderSingleCard(key) {
   const m = mysteries[key]
   if (!m || currentView === 'all') return
+  // 房间筛选：如果选中了某个房间且不匹配，忽略
+  if (selectedRoomId && m.room_id !== selectedRoomId) return
 
   const container = document.getElementById('events')
   // 移除空状态
@@ -689,10 +746,16 @@ function renderHistory() {
       }
 
       const records = res.records
+      // 房间筛选
+      const roomFiltered = selectedRoomId ? records.filter(r => (r.last_room_id || r.room_id) === selectedRoomId) : records
+      if (roomFiltered.length === 0) {
+        container.innerHTML = '<div class="empty"><div class="icon">📜</div>暂无历史记录</div>'
+        return
+      }
       // 渲染选择栏（精简版）
       let html = ''
 
-      records.forEach(item => {
+      roomFiltered.forEach(item => {
         const extra = item.extra || {}
         const uniqueId = extra.unique_id || item.unique_id || item.sec_uid?.slice(0, 12) || '?'
         const profileUrl = item.sec_uid ? 'https://www.douyin.com/user/' + encodeURIComponent(item.sec_uid) : null
@@ -860,6 +923,8 @@ let _allShowAll = false    // 全部页是否显示所有历史
 function renderAllRecords(skipFetch) {
   const container = document.getElementById('events')
   let roomIds = Object.keys(currentRooms)
+  // 房间筛选：如果选中了某个房间，只查询该房间
+  if (selectedRoomId) roomIds = roomIds.filter(rid => rid === selectedRoomId)
   if (roomIds.length === 0) {
     container.innerHTML = '<div class="empty"><div class="icon">📋</div>开始监听后自动显示数据</div>'
     return
@@ -1086,7 +1151,7 @@ function loadAllActions(uid, roomId) {
 
 function loadFeed() {
   const container = document.getElementById('feedContainer')
-  const roomIds = Object.keys(currentRooms)
+  const roomIds = selectedRoomId ? [selectedRoomId] : Object.keys(currentRooms)
   if (roomIds.length === 0) {
     container.innerHTML = '<div class="feed-empty"><div class="icon">🖥</div>开始监听后自动显示<br><span style="font-size:11px;color:#666">公屏时间线</span></div>'
     return
@@ -1152,6 +1217,9 @@ function appendFeedItem(event) {
   if (!container) return
 
   const d = event.data || event
+  // 房间筛选：如果选中了某个房间且不匹配，忽略
+  if (selectedRoomId && d.room_id !== selectedRoomId) return
+
   const timeStr = formatTime(d.timestamp || Math.floor(Date.now() / 1000))
   const name = escapeHtml(d.real_name || d.display || '?')
 
@@ -1275,6 +1343,12 @@ function stopRoom(roomId) {
     }
   })
   delete currentRooms[roomId]
+  if (selectedRoomId === roomId) {
+    const remaining = Object.keys(currentRooms)
+    selectedRoomId = remaining.length > 0 ? remaining[0] : null
+  }
+  updateRoomSelector()
+  updateHeaderState()
   renderMysteries()
   fetch('/api/stop', {
     method: 'POST',
@@ -1301,6 +1375,9 @@ function stopAll() {
   disconnectTimers = {}
   Object.keys(mysteries).forEach(k => delete mysteries[k])
   Object.keys(currentRooms).forEach(k => delete currentRooms[k])
+  selectedRoomId = null
+  updateRoomSelector()
+  updateHeaderState()
   document.getElementById('btn').textContent = '🔍 监听'
   document.getElementById('btn').className = ''
   lastRoomId = null
@@ -1320,6 +1397,9 @@ function stopAll() {
           currentRooms[r.room_id] = {nickname: r.nickname || r.room_id}
           connectSSE(r.room_id)
         })
+        updateRoomSelector()
+        updateHeaderState()
+        if (data.active.length > 0) selectRoom(data.active[0].room_id)
         lastRoomId = data.active[0].room_id
         document.getElementById('btn').textContent = '停止'
         document.getElementById('btn').className = 'stop-btn'
@@ -1341,20 +1421,20 @@ const { animate, stagger, spring } = anime;
     if(anim) { anim.pause(); anim = null; }
     if(dot.classList.contains('green')){
       anim = animate(dot, {
-        boxShadow: ['0 0 0 0 rgba(52,199,89,0)', '0 0 0 6px rgba(52,199,89,0.3)'],
+        boxShadow: ['0 0 4px 2px rgba(52,199,89,0.3), inset 0 1px 2px rgba(255,255,255,.3)', '0 0 12px 4px rgba(52,199,89,0.5), inset 0 1px 2px rgba(255,255,255,.3)'],
         duration: 1500,
         loop: true,
         ease: 'inOutSine',
       });
     } else if(dot.classList.contains('red')){
       anim = animate(dot, {
-        boxShadow: ['0 0 0 0 rgba(255,59,48,0)', '0 0 0 5px rgba(255,59,48,0.2)'],
+        boxShadow: ['0 0 4px 2px rgba(255,59,48,0.3), inset 0 1px 2px rgba(255,255,255,.3)', '0 0 12px 4px rgba(255,59,48,0.5), inset 0 1px 2px rgba(255,255,255,.3)'],
         duration: 1200,
         loop: true,
         ease: 'inOutSine',
       });
     } else {
-      dot.style.boxShadow = 'none';
+      dot.style.boxShadow = 'inset 0 1px 2px rgba(255,255,255,.15)';
     }
   });
   obs.observe(dot, { attributes: true, attributeFilter: ['class'] });
