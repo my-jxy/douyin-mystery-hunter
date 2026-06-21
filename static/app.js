@@ -664,7 +664,7 @@ function renderMysteries() {
     if (totalActions > 0) {
       html += `<div id="actions-${secUid}" style="display:${m.expanded?'block':'none'};margin-top:6px;border-top:1px solid #222;padding-top:4px">`
       m.chats.forEach(c => {
-        html += `<div style="font-size:11px;color:#ccc;padding:2px 0">💬 ${escapeHtml(c.content)}</div>`
+        html += `<div style="font-size:11px;color:#ccc;padding:2px 0">💬 ${renderEmoji(escapeHtml(c.content))}</div>`
         })
         m.gifts.forEach(g => {
           html += `<div style="font-size:11px;color:#ff9500;padding:2px 0">🎁 ${escapeHtml(g.name)} x${g.count}</div>`
@@ -740,7 +740,7 @@ function renderSingleCard(key) {
   if (totalActions > 0) {
     cardHtml += `<div id="actions-${key}" style="display:${m.expanded?'block':'none'};margin-top:6px;border-top:1px solid #222;padding-top:4px">`
     m.chats.forEach(c => {
-      cardHtml += `<div style="font-size:11px;color:#ccc;padding:2px 0">💬 ${escapeHtml(c.content)}</div>`
+      cardHtml += `<div style="font-size:11px;color:#ccc;padding:2px 0">💬 ${renderEmoji(escapeHtml(c.content))}</div>`
     })
     m.gifts.forEach(g => {
       cardHtml += `<div style="font-size:11px;color:#ff9500;padding:2px 0">🎁 ${escapeHtml(g.name)} x${g.count}</div>`
@@ -1163,7 +1163,7 @@ function loadAllActions(uid, roomId) {
       let html = ''
       data.interactions.slice(0, 50).forEach(function(item) {
         if (item.type === 'chat') {
-          html += '<div style="font-size:11px;color:#ccc;padding:2px 0">💬 ' + escapeHtml(item.content) + '</div>'
+          html += '<div style="font-size:11px;color:#ccc;padding:2px 0">💬 ' + renderEmoji(escapeHtml(item.content)) + '</div>'
         } else if (item.type === 'gift') {
           html += '<div style="font-size:11px;color:#ff9500;padding:2px 0">🎁 ' + escapeHtml(item.content) + ' x' + item.gift_count + '</div>'
         }
