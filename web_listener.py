@@ -508,6 +508,8 @@ def get_room_id_by_douyin_id(douyin_id):
 
 # ========== 房间监听器 ==========
 listeners = {}
+# 每个房间的 SSE 连接版本号，新连接 +1，旧连接检测到版本落后自动退出
+_sse_generations = {}
 
 class RoomListener:
     def __init__(self, room_id, nickname='', sec_uid=''):
@@ -1569,9 +1571,10 @@ def _build_feed_events(room_id, limit=200):
 
         conn.close()
 
-        # 3. 合并、按 timestamp 排序、限制 limit 条
-        events.sort(key=lambda x: x['timestamp'])
+        # 3. 合并、按 timestamp 排序（最新的在前）、取 limit 条、再反转回时间正序
+        events.sort(key=lambda x: x['timestamp'], reverse=True)
         events = events[:limit]
+        events.reverse()
 
     except Exception as e:
         print(f"[FEED] _build_feed_events 失败: {e}", flush=True)
@@ -1582,6 +1585,10 @@ def _build_feed_events(room_id, limit=200):
 @app.route('/stream/<room_id>')
 def stream(room_id):
     """SSE 实时事件流"""
+    # 新连接版本号 +1
+    _sse_generations[room_id] = _sse_generations.get(room_id, 0) + 1
+    gen = _sse_generations[room_id]  # 记下当前版本
+
     def generate():
         listener = listeners.get(room_id)
         if not listener:
@@ -1595,11 +1602,16 @@ def stream(room_id):
                      'feed': _build_feed_events(room_id)}
         yield f"data: {json.dumps({'type': 'init', 'data': init_data})}\n\n"
         while listener.running or not listener.events.empty():
+            # 检测版本号：如果已经不是当前最新连接，退出
+            if _sse_generations.get(room_id) != gen:
+                break
             try:
                 event = listener.events.get(timeout=30)
                 yield f"data: {json.dumps(event)}\n\n"
             except queue.Empty:
-                # 心跳保活
+                # 检测版本号：每次心跳也检查一次
+                if _sse_generations.get(room_id) != gen:
+                    break
                 yield ": heartbeat\n\n"
 
     return Response(generate(), mimetype='text/event-stream',

@@ -475,10 +475,10 @@ function handleEvent(event, roomId) {
       if (d.is_anonymous) {
         showAnonymousBanner(d.is_anonymous_msg || '当前为匿名模式直播间，仅能通过<b>礼物</b>获取用户真实身份。<br>识别到的用户请点击上方 <b>「📋全部」</b> 按钮查看，不会存入「📜历史」。')
       }
-      // 从 SSE init 事件渲染公屏历史（消除时间窗口断裂）
+      // 从 SSE init 事件渲染/补漏公屏历史
       if (d.feed && Array.isArray(d.feed) && d.feed.length > 0) {
         const feedContainer = document.getElementById('feedContainer')
-        if (feedContainer && !feedContainer.querySelector('.feed-item')) {
+        if (feedContainer) {
           renderFeed(d.feed)
         }
       }
@@ -1208,6 +1208,73 @@ function renderFeed(events) {
     container.innerHTML = '<div class="feed-empty"><div class="icon">🖥</div>暂无互动记录</div>'
     return
   }
+
+  // 已经存在 DOM 项 → SSE 重连补漏：比最后一条更新的消息追加到底部
+  const existingItems = container.querySelectorAll('.feed-item')
+  if (existingItems.length > 0) {
+    // 取最后一条的时间戳（优先 data-ts，降级到文本解析）
+    const lastItem = existingItems[existingItems.length - 1]
+    let lastTs = lastItem.dataset.ts ? parseInt(lastItem.dataset.ts) : NaN
+    if (isNaN(lastTs)) {
+      const timeText = lastItem.querySelector('.feed-time')?.textContent
+      if (timeText) {
+        const parts = timeText.split(':')
+        if (parts.length === 3) {
+          const now = new Date()
+          lastTs = Math.floor(new Date(
+            now.getFullYear(), now.getMonth(), now.getDate(),
+            parseInt(parts[0]), parseInt(parts[1]), parseInt(parts[2])
+          ).getTime() / 1000)
+        }
+      }
+    }
+
+    if (!isNaN(lastTs)) {
+      let appended = 0
+      for (const ev of events) {
+        if (ev.timestamp > lastTs) {
+          const timeStr = formatTime(ev.timestamp)
+          const name = escapeHtml(ev.real_name || ev.display || '?')
+          const typeClass = ev.type === 'enter' ? 'feed-enter' : ev.type === 'chat' ? 'feed-chat' : 'feed-gift'
+          let icon, bodyHtml
+          if (ev.type === 'enter') {
+            icon = '🚪'
+            bodyHtml = `<span class="feed-name">${name}</span> 进入了直播间`
+          } else if (ev.type === 'chat') {
+            const content = renderEmoji(escapeHtml(ev.content || ''))
+            icon = '💬'
+            bodyHtml = `<span class="feed-name">${name}</span><span class="feed-content">: ${content}</span>`
+          } else {
+            const giftName = renderEmoji(escapeHtml(ev.content || '?'))
+            const cnt = ev.count || 1
+            icon = '🎁'
+            bodyHtml = `<span class="feed-name">${name}</span> 送了 <span class="feed-count">${cnt}个${giftName}</span>`
+          }
+          container.insertAdjacentHTML('beforeend',
+            `<div class="feed-item ${typeClass}" data-ts="${ev.timestamp}">` +
+            `<span class="feed-icon">${icon}</span>` +
+            `<div class="feed-body">${bodyHtml}</div>` +
+            `<span class="feed-time">${timeStr}</span></div>`
+          )
+          appended++
+        }
+      }
+      // 裁剪 DOM 不超过 500 条
+      while (container.children.length > 500) {
+        container.removeChild(container.firstChild)
+      }
+      // 自动滚动（仅在用户未手动上滚时）
+      if (appended > 0) {
+        const isScrolledUp = container.scrollTop + container.clientHeight < container.scrollHeight - 60
+        if (!isScrolledUp) {
+          container.scrollTop = container.scrollHeight
+        }
+      }
+    }
+    return
+  }
+
+  // 容器为空 → 首次加载完全渲染
   let html = ''
   events.forEach(ev => {
     const timeStr = formatTime(ev.timestamp)
@@ -1227,7 +1294,7 @@ function renderFeed(events) {
       icon = '🎁'
       bodyHtml = `<span class="feed-name">${name}</span> 送了 <span class="feed-count">${cnt}个${giftName}</span>`
     }
-    html += `<div class="feed-item ${typeClass}">`
+    html += `<div class="feed-item ${typeClass}" data-ts="${ev.timestamp}">`
     html += `<span class="feed-icon">${icon}</span>`
     html += `<div class="feed-body">${bodyHtml}</div>`
     html += `<span class="feed-time">${timeStr}</span>`
