@@ -1,0 +1,707 @@
+{
+  "V5": {
+    "file": "8cff5423.png",
+    "emoji": "",
+    "name": "V5"
+  },
+  "给力": {
+    "file": "14e9d1de.png",
+    "emoji": "",
+    "name": "给力"
+  },
+  "嘿哈": {
+    "file": "2d7075ea.png",
+    "emoji": "",
+    "name": "嘿哈"
+  },
+  "加好友": {
+    "file": "f4cbe0c8.png",
+    "emoji": "",
+    "name": "加好友"
+  },
+  "勾引": {
+    "file": "6232f115.png",
+    "emoji": "",
+    "name": "勾引"
+  },
+  "机智": {
+    "file": "43715f5e.png",
+    "emoji": "",
+    "name": "机智"
+  },
+  "来看我": {
+    "file": "8146aa7f.png",
+    "emoji": "",
+    "name": "来看我"
+  },
+  "灵机一动": {
+    "file": "f0a9a7ee.png",
+    "emoji": "",
+    "name": "灵机一动"
+  },
+  "困": {
+    "file": "dba64cc1.png",
+    "emoji": "",
+    "name": "困"
+  },
+  "疑问": {
+    "file": "9822c60d.png",
+    "emoji": "",
+    "name": "疑问"
+  },
+  "泣不成声": {
+    "file": "d27ec0bb.png",
+    "emoji": "",
+    "name": "泣不成声"
+  },
+  "小鼓掌": {
+    "file": "f2b8cabc.png",
+    "emoji": "",
+    "name": "小鼓掌"
+  },
+  "发呆": {
+    "file": "64296992.png",
+    "emoji": "",
+    "name": "发呆"
+  },
+  "吐血": {
+    "file": "acb4a2e9.png",
+    "emoji": "",
+    "name": "吐血"
+  },
+  "酷拽": {
+    "file": "f0488b42.png",
+    "emoji": "",
+    "name": "酷拽"
+  },
+  "泪奔": {
+    "file": "f403cee8.png",
+    "emoji": "",
+    "name": "泪奔"
+  },
+  "抠鼻": {
+    "file": "38223549.png",
+    "emoji": "",
+    "name": "抠鼻"
+  },
+  "互粉": {
+    "file": "96b3c9ba.png",
+    "emoji": "",
+    "name": "互粉"
+  },
+  "去污粉": {
+    "file": "c5e01172.png",
+    "emoji": "",
+    "name": "去污粉"
+  },
+  "666": {
+    "file": "fae0b27c.png",
+    "emoji": "",
+    "name": "666"
+  },
+  "舔屏": {
+    "file": "11c125e4.png",
+    "emoji": "",
+    "name": "舔屏"
+  },
+  "鄙视": {
+    "file": "4f288992.png",
+    "emoji": "",
+    "name": "鄙视"
+  },
+  "紫薇别走": {
+    "file": "8d2e3cb3.png",
+    "emoji": "",
+    "name": "紫薇别走"
+  },
+  "不失礼貌的微笑": {
+    "file": "65d249ee.png",
+    "emoji": "",
+    "name": "不失礼貌的微笑"
+  },
+  "吐舌": {
+    "file": "4174aa61.png",
+    "emoji": "",
+    "name": "吐舌"
+  },
+  "呆无辜": {
+    "file": "6e1cd685.png",
+    "emoji": "",
+    "name": "呆无辜"
+  },
+  "白眼": {
+    "file": "45b4471f.png",
+    "emoji": "",
+    "name": "白眼"
+  },
+  "吃瓜群众": {
+    "file": "2ba645cc.png",
+    "emoji": "",
+    "name": "吃瓜群众"
+  },
+  "绿帽子": {
+    "file": "c90ae681.png",
+    "emoji": "",
+    "name": "绿帽子"
+  },
+  "皱眉": {
+    "file": "fc0092e2.png",
+    "emoji": "",
+    "name": "皱眉"
+  },
+  "擦汗": {
+    "file": "04c90e50.png",
+    "emoji": "",
+    "name": "擦汗"
+  },
+  "强": {
+    "file": "7d00964b.png",
+    "emoji": "",
+    "name": "强"
+  },
+  "如花": {
+    "file": "ef434144.png",
+    "emoji": "",
+    "name": "如花"
+  },
+  "奋斗": {
+    "file": "54f5a9c8.png",
+    "emoji": "",
+    "name": "奋斗"
+  },
+  "微笑": {
+    "file": "5acfd68d.png",
+    "emoji": "🙂呵呵",
+    "name": "微笑"
+  },
+  "害羞": {
+    "file": "0e025345.png",
+    "emoji": "😊羞涩微笑",
+    "name": "害羞"
+  },
+  "击掌": {
+    "file": "a9bce2ec.png",
+    "emoji": "🙌举双手",
+    "name": "击掌"
+  },
+  "左上": {
+    "file": "f3296f64.png",
+    "emoji": "👆反手食指向上指",
+    "name": "左上"
+  },
+  "握手": {
+    "file": "3f04bb50.png",
+    "emoji": "🤝握手",
+    "name": "握手"
+  },
+  "18禁": {
+    "file": "97cd6d2e.png",
+    "emoji": "🔞18禁",
+    "name": "18禁"
+  },
+  "菜刀": {
+    "file": "035386d7.png",
+    "emoji": "🔪菜刀",
+    "name": "菜刀"
+  },
+  "爱心": {
+    "file": "5a2e579b.png",
+    "emoji": "❤红心",
+    "name": "爱心"
+  },
+  "心碎": {
+    "file": "eb3aa164.png",
+    "emoji": "💔心碎",
+    "name": "心碎"
+  },
+  "便便": {
+    "file": "246dbf22.png",
+    "emoji": "💩大便",
+    "name": "便便"
+  },
+  "惊讶": {
+    "file": "e3b28512.png",
+    "emoji": "😲震惊",
+    "name": "惊讶"
+  },
+  "调皮": {
+    "file": "9a87d094.png",
+    "emoji": "😛吐舌",
+    "name": "调皮"
+  },
+  "礼物": {
+    "file": "117f5cef.png",
+    "emoji": "🎁礼物",
+    "name": "礼物"
+  },
+  "蛋糕": {
+    "file": "daa6cfa7.png",
+    "emoji": "🎂生日蛋糕",
+    "name": "蛋糕"
+  },
+  "派对": {
+    "file": "ab2e545e.png",
+    "emoji": "🎉拉炮彩带",
+    "name": "派对"
+  },
+  "不看": {
+    "file": "c83620d3.png",
+    "emoji": "🙈非礼勿视",
+    "name": "不看"
+  },
+  "炸弹": {
+    "file": "72e6f0aa.png",
+    "emoji": "💣炸弹",
+    "name": "炸弹"
+  },
+  "憨笑": {
+    "file": "16014784.png",
+    "emoji": "😀嘿嘿",
+    "name": "憨笑"
+  },
+  "悠闲": {
+    "file": "67fb6605.png",
+    "emoji": "🚬香烟",
+    "name": "悠闲"
+  },
+  "晕": {
+    "file": "b091fdcd.png",
+    "emoji": "😵晕头转向",
+    "name": "晕"
+  },
+  "囧": {
+    "file": "28986931.png",
+    "emoji": "🙄翻白眼",
+    "name": "囧"
+  },
+  "阴险": {
+    "file": "f1f4185d.png",
+    "emoji": "😏得意",
+    "name": "阴险"
+  },
+  "惊恐": {
+    "file": "db477784.png",
+    "emoji": "😨害怕",
+    "name": "惊恐"
+  },
+  "难过": {
+    "file": "aa267ae0.png",
+    "emoji": "🙁微微不满",
+    "name": "难过"
+  },
+  "斜眼": {
+    "file": "dd4a6240.png",
+    "emoji": "😒不高兴",
+    "name": "斜眼"
+  },
+  "左哼哼": {
+    "file": "d5c95f0c.png",
+    "emoji": "😤傲慢",
+    "name": "左哼哼"
+  },
+  "右哼哼": {
+    "file": "4b2b7f33.png",
+    "emoji": "😤傲慢",
+    "name": "右哼哼"
+  },
+  "咒骂": {
+    "file": "a509f1da.png",
+    "emoji": "🤬嘴上有符号的脸",
+    "name": "咒骂"
+  },
+  "咖啡": {
+    "file": "a761914f.png",
+    "emoji": "☕热饮",
+    "name": "咖啡"
+  },
+  "西瓜": {
+    "file": "b9af3fd5.png",
+    "emoji": "🍉西瓜",
+    "name": "西瓜"
+  },
+  "衰": {
+    "file": "09a69b6c.png",
+    "emoji": "😢哭",
+    "name": "衰"
+  },
+  "太阳": {
+    "file": "d32b7666.png",
+    "emoji": "🌞微笑的太阳",
+    "name": "太阳"
+  },
+  "月亮": {
+    "file": "3b373249.png",
+    "emoji": "🌜微笑的下弦月",
+    "name": "月亮"
+  },
+  "发": {
+    "file": "922e08ae.png",
+    "emoji": "🀅麻将牌发财",
+    "name": "发"
+  },
+  "猪头": {
+    "file": "5cab7477.png",
+    "emoji": "🐷猪头",
+    "name": "猪头"
+  },
+  "凋谢": {
+    "file": "cba80736.png",
+    "emoji": "🥀枯萎的花",
+    "name": "凋谢"
+  },
+  "红包": {
+    "file": "4dfa3b47.png",
+    "emoji": "🧧红包",
+    "name": "红包"
+  },
+  "拳头": {
+    "file": "63c09097.png",
+    "emoji": "✊举起拳头",
+    "name": "拳头"
+  },
+  "胜利": {
+    "file": "bf7230c4.png",
+    "emoji": "✌胜利手势",
+    "name": "胜利"
+  },
+  "抱拳": {
+    "file": "94d3a21b.png",
+    "emoji": "🙏双手合十",
+    "name": "抱拳"
+  },
+  "闭嘴": {
+    "file": "5350a4e9.png",
+    "emoji": "🤐闭嘴",
+    "name": "闭嘴"
+  },
+  "弱": {
+    "file": "5490777b.png",
+    "emoji": "👎拇指向下",
+    "name": "弱"
+  },
+  "左边": {
+    "file": "a7eaff29.png",
+    "emoji": "👈反手食指向左指",
+    "name": "左边"
+  },
+  "右边": {
+    "file": "128d58f0.png",
+    "emoji": "👉反手食指向右指",
+    "name": "右边"
+  },
+  "送心": {
+    "file": "7066bf27.png",
+    "emoji": "🥰喜笑颜开",
+    "name": "送心"
+  },
+  "耶": {
+    "file": "7f74405c.png",
+    "emoji": "✌胜利手势",
+    "name": "耶"
+  },
+  "捂脸": {
+    "file": "eb0caf12.png",
+    "emoji": "🤦捂脸",
+    "name": "捂脸"
+  },
+  "色": {
+    "file": "9122c537.png",
+    "emoji": "😍花痴",
+    "name": "色"
+  },
+  "打脸": {
+    "file": "917b6f6c.png",
+    "emoji": "🤕受伤",
+    "name": "打脸"
+  },
+  "大笑": {
+    "file": "4402e6e2.png",
+    "emoji": "😄大笑",
+    "name": "大笑"
+  },
+  "哈欠": {
+    "file": "cf8b4e4d.png",
+    "emoji": "🥱打呵欠",
+    "name": "哈欠"
+  },
+  "震惊": {
+    "file": "f5d19ffe.png",
+    "emoji": "🤯爆炸头",
+    "name": "震惊"
+  },
+  "大金牙": {
+    "file": "a2eca67c.png",
+    "emoji": "🦷牙齿",
+    "name": "大金牙"
+  },
+  "偷笑": {
+    "file": "dfa6c064.png",
+    "emoji": "🤭不说",
+    "name": "偷笑"
+  },
+  "石化": {
+    "file": "09786108.png",
+    "emoji": "😰冷汗",
+    "name": "石化"
+  },
+  "思考": {
+    "file": "21d68b2d.png",
+    "emoji": "🤔想一想",
+    "name": "思考"
+  },
+  "可怜": {
+    "file": "d9de07e2.png",
+    "emoji": "🥺恳求的脸",
+    "name": "可怜"
+  },
+  "嘘": {
+    "file": "58fdbe08.png",
+    "emoji": "🤫安静的脸",
+    "name": "嘘"
+  },
+  "撇嘴": {
+    "file": "a669a1cf.png",
+    "emoji": "😕困扰",
+    "name": "撇嘴"
+  },
+  "尴尬": {
+    "file": "1ef4729c.png",
+    "emoji": "😅苦笑",
+    "name": "尴尬"
+  },
+  "笑哭": {
+    "file": "11d2b379.png",
+    "emoji": "😂笑哭了",
+    "name": "笑哭"
+  },
+  "生病": {
+    "file": "75d80e66.png",
+    "emoji": "😷感冒",
+    "name": "生病"
+  },
+  "奸笑": {
+    "file": "ab5805c7.png",
+    "emoji": "😏得意",
+    "name": "奸笑"
+  },
+  "得意": {
+    "file": "dcd19075.png",
+    "emoji": "😎墨镜笑脸",
+    "name": "得意"
+  },
+  "坏笑": {
+    "file": "fc667767.png",
+    "emoji": "😬龇牙咧嘴",
+    "name": "坏笑"
+  },
+  "抓狂": {
+    "file": "a4de5414.png",
+    "emoji": "😫累",
+    "name": "抓狂"
+  },
+  "钱": {
+    "file": "d23513f0.png",
+    "emoji": "🤑发财",
+    "name": "钱"
+  },
+  "亲亲": {
+    "file": "856246ec.png",
+    "emoji": "😚羞涩亲亲",
+    "name": "亲亲"
+  },
+  "恐惧": {
+    "file": "1aafa188.png",
+    "emoji": "😱吓死了",
+    "name": "恐惧"
+  },
+  "愉快": {
+    "file": "7cee7094.png",
+    "emoji": "😄大笑",
+    "name": "愉快"
+  },
+  "玫瑰": {
+    "file": "42599fb8.png",
+    "emoji": "🌹玫瑰",
+    "name": "玫瑰"
+  },
+  "快哭了": {
+    "file": "305426c6.png",
+    "emoji": "😥失望但如释重负",
+    "name": "快哭了"
+  },
+  "翻白眼": {
+    "file": "e0a8eaa6.png",
+    "emoji": "🙄翻白眼",
+    "name": "翻白眼"
+  },
+  "赞": {
+    "file": "87f653bc.png",
+    "emoji": "👍拇指向上",
+    "name": "赞"
+  },
+  "鼓掌": {
+    "file": "5e608d09.png",
+    "emoji": "👏鼓掌",
+    "name": "鼓掌"
+  },
+  "感谢": {
+    "file": "ce818f7e.png",
+    "emoji": "🙏双手合十",
+    "name": "感谢"
+  },
+  "嘴唇": {
+    "file": "bd130f61.png",
+    "emoji": "👄嘴",
+    "name": "嘴唇"
+  },
+  "胡瓜": {
+    "file": "e15b08b7.png",
+    "emoji": "🥒黄瓜",
+    "name": "胡瓜"
+  },
+  "流泪": {
+    "file": "c6fe3df0.png",
+    "emoji": "😢哭",
+    "name": "流泪"
+  },
+  "啤酒": {
+    "file": "5fbf3436.png",
+    "emoji": "🍺啤酒",
+    "name": "啤酒"
+  },
+  "我想静静": {
+    "file": "903883cb.png",
+    "emoji": "😑无语",
+    "name": "我想静静"
+  },
+  "委屈": {
+    "file": "af41e0fd.png",
+    "emoji": "🙁微微不满",
+    "name": "委屈"
+  },
+  "飞吻": {
+    "file": "9316271a.png",
+    "emoji": "😘飞吻",
+    "name": "飞吻"
+  },
+  "再见": {
+    "file": "8e5c0a1e.png",
+    "emoji": "👋挥手",
+    "name": "再见"
+  },
+  "听歌": {
+    "file": "2bb4b412.png",
+    "emoji": "🎧耳机",
+    "name": "听歌"
+  },
+  "发怒": {
+    "file": "f56fb0da.png",
+    "emoji": "😡怒火中烧",
+    "name": "发怒"
+  },
+  "绝望的凝视": {
+    "file": "86895937.png",
+    "emoji": "😞失望",
+    "name": "绝望的凝视"
+  },
+  "看": {
+    "file": "9302446f.png",
+    "emoji": "🐶狗脸",
+    "name": "看"
+  },
+  "熊吉": {
+    "file": "d96e3db1.png",
+    "emoji": "🐻熊",
+    "name": "熊吉"
+  },
+  "骷髅": {
+    "file": "10fd569c.png",
+    "emoji": "💀头骨",
+    "name": "骷髅"
+  },
+  "黑脸": {
+    "file": "eeae6bf5.png",
+    "emoji": "🌚微笑的朔月",
+    "name": "黑脸"
+  },
+  "呲牙": {
+    "file": "f70ae504.png",
+    "emoji": "😁嘻嘻",
+    "name": "呲牙"
+  },
+  "吐": {
+    "file": "37a03b5e.png",
+    "emoji": "🤮呕吐",
+    "name": "吐"
+  },
+  "流汗": {
+    "file": "64b93b32.png",
+    "emoji": "😓汗",
+    "name": "流汗"
+  },
+  "摸头": {
+    "file": "faf20a99.png",
+    "emoji": "😌松了口气",
+    "name": "摸头"
+  },
+  "红脸": {
+    "file": "49fc4d5a.png",
+    "emoji": "😳脸红",
+    "name": "红脸"
+  },
+  "尬笑": {
+    "file": "38d02c40.png",
+    "emoji": "😅苦笑",
+    "name": "尬笑"
+  },
+  "做鬼脸": {
+    "file": "f76d2aa7.png",
+    "emoji": "😜单眼吐舌",
+    "name": "做鬼脸"
+  },
+  "睡": {
+    "file": "0e7c928c.png",
+    "emoji": "😪困",
+    "name": "睡"
+  },
+  "惊喜": {
+    "file": "ba8e1a9a.png",
+    "emoji": "🤩好崇拜哦",
+    "name": "惊喜"
+  },
+  "敲打": {
+    "file": "426c734f.png",
+    "emoji": "🤕受伤",
+    "name": "敲打"
+  },
+  "吐彩虹": {
+    "file": "e4385257.png",
+    "emoji": "🌈彩虹",
+    "name": "吐彩虹"
+  },
+  "大哭": {
+    "file": "d0cfabad.png",
+    "emoji": "😭放声大哭",
+    "name": "大哭"
+  },
+  "比心": {
+    "file": "2ed7608d.png",
+    "emoji": "🤞交叉的手指",
+    "name": "比心"
+  },
+  "强壮": {
+    "file": "a353adad.png",
+    "emoji": "💪肌肉",
+    "name": "强壮"
+  },
+  "碰拳": {
+    "file": "48ab1c55.png",
+    "emoji": "🤛朝左的拳头",
+    "name": "碰拳"
+  },
+  "OK": {
+    "file": "e0aa021e.png",
+    "emoji": "👌OK",
+    "name": "OK"
+  }
+}

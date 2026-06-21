@@ -1375,42 +1375,9 @@ def get_interactions(room_id, sec_uid):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
-@app.route('/stream/<room_id>')
-def stream(room_id):
-    """SSE 实时事件流"""
-    def generate():
-        listener = listeners.get(room_id)
-        if not listener:
-            yield f"data: {json.dumps({'type': 'error', 'data': {'error': '未找到监听器'}})}\n\n"
-            return
-        # 发送初始状态 + 已有神秘人历史
-        init_data = {'room_id': room_id, 'nickname': listener.nickname,
-                     'mystery_count': listener.mystery_count,
-                     'is_anonymous': listener.is_private,
-                     'history': listener.recent_mysteries[-50:]}
-        yield f"data: {json.dumps({'type': 'init', 'data': init_data})}\n\n"
-        while listener.running or not listener.events.empty():
-            try:
-                event = listener.events.get(timeout=30)
-                yield f"data: {json.dumps(event)}\n\n"
-            except queue.Empty:
-                # 心跳保活
-                yield ": heartbeat\n\n"
-
-    return Response(generate(), mimetype='text/event-stream',
-                    headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive',
-                             'Access-Control-Allow-Origin': '*'})
-
-
-
-
-@app.route('/api/feed/<room_id>')
-def feed_events(room_id):
-    """返回某个直播间的互动时间线（公屏用）"""
-    limit = request.args.get('limit', default=200, type=int)
-
+def _build_feed_events(room_id, limit=200):
+    """从数据库构建公屏历史事件列表（与 /api/feed/<room_id> 同逻辑）"""
     events = []
-
     try:
         conn = sqlite3.connect(_DB_PATH)
         conn.row_factory = sqlite3.Row
@@ -1463,9 +1430,62 @@ def feed_events(room_id):
         events = events[:limit]
 
     except Exception as e:
+        print(f"[FEED] _build_feed_events 失败: {e}", flush=True)
+
+    return events
+
+
+@app.route('/stream/<room_id>')
+def stream(room_id):
+    """SSE 实时事件流"""
+    def generate():
+        listener = listeners.get(room_id)
+        if not listener:
+            yield f"data: {json.dumps({'type': 'error', 'data': {'error': '未找到监听器'}})}\n\n"
+            return
+        # 发送初始状态 + 已有神秘人历史 + 公屏历史
+        init_data = {'room_id': room_id, 'nickname': listener.nickname,
+                     'mystery_count': listener.mystery_count,
+                     'is_anonymous': listener.is_private,
+                     'history': listener.recent_mysteries[-50:],
+                     'feed': _build_feed_events(room_id)}
+        yield f"data: {json.dumps({'type': 'init', 'data': init_data})}\n\n"
+        while listener.running or not listener.events.empty():
+            try:
+                event = listener.events.get(timeout=30)
+                yield f"data: {json.dumps(event)}\n\n"
+            except queue.Empty:
+                # 心跳保活
+                yield ": heartbeat\n\n"
+
+    return Response(generate(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive',
+                             'Access-Control-Allow-Origin': '*'})
+
+
+
+
+@app.route('/api/feed/<room_id>')
+def feed_events(room_id):
+    """返回某个直播间的互动时间线（公屏用）"""
+    limit = request.args.get('limit', default=200, type=int)
+    try:
+        events = _build_feed_events(room_id, limit)
+        return jsonify({'success': True, 'events': events, 'count': len(events)})
+    except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
-    return jsonify({'success': True, 'events': events, 'count': len(events)})
+
+@app.route('/api/emoji_map')
+def emoji_map():
+    """返回抖音表情映射（名字 -> 本地图片路径）"""
+    import os
+    map_path = os.path.join(os.path.dirname(__file__), 'static', 'emoji_map.json')
+    try:
+        with open(map_path, 'r', encoding='utf-8') as f:
+            return jsonify({'success': True, 'map': json.load(f)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 
 if __name__ == '__main__':

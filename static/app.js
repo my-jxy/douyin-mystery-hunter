@@ -6,12 +6,37 @@ let recordAllEnabled = false  // 是否记录全部用户
 let currentView = 'mystery'   // 'mystery' 或 'all'
 let lastRoomId = null         // 最近监听的房间，用于按钮切换停止
 let historyCache = []          // 搜索历史缓存（预加载零延迟）
+let emojiMap = {}              // 抖音表情映射：名字 -> {file, emoji}
 let selectedRoomId = null      // 当前选中的房间ID，null=显示全部
 
 function escapeHtml(text) {
   const d = document.createElement('div')
   d.textContent = text
   return d.innerHTML
+}
+
+// ========== 抖音表情渲染 ==========
+function loadEmojiMap() {
+  fetch('/api/emoji_map')
+    .then(r => r.json())
+    .then(data => {
+      if (data.success && data.map) emojiMap = data.map
+    })
+    .catch(() => {})
+}
+
+function renderEmoji(text) {
+  if (!text || !emojiMap) return text
+  return text.replace(/\[([^\]]+)\]/g, function(match, name) {
+    const em = emojiMap[name]
+    if (em && em.file) {
+      return '<img src="/static/emoji/' + em.file + '" class="dy-emoji" alt="[' + name + ']" title="[' + name + ']">'
+    }
+    if (em && em.emoji) {
+      return em.emoji
+    }
+    return match  // 找不到就不换
+  })
 }
 
 function setStatus(text, color) {
@@ -449,6 +474,13 @@ function handleEvent(event, roomId) {
       // 匿名模式提示
       if (d.is_anonymous) {
         showAnonymousBanner(d.is_anonymous_msg || '当前为匿名模式直播间，仅能通过<b>礼物</b>获取用户真实身份。<br>识别到的用户请点击上方 <b>「📋全部」</b> 按钮查看，不会存入「📜历史」。')
+      }
+      // 从 SSE init 事件渲染公屏历史（消除时间窗口断裂）
+      if (d.feed && Array.isArray(d.feed) && d.feed.length > 0) {
+        const feedContainer = document.getElementById('feedContainer')
+        if (feedContainer && !feedContainer.querySelector('.feed-item')) {
+          renderFeed(d.feed)
+        }
       }
       break
     case 'room_anonymous':
@@ -1156,23 +1188,13 @@ function loadFeed() {
     container.innerHTML = '<div class="feed-empty"><div class="icon">🖥</div>开始监听后自动显示<br><span style="font-size:11px;color:#666">公屏时间线</span></div>'
     return
   }
-  container.innerHTML = '<div class="feed-empty"><div class="icon">⏳</div>加载中...</div>'
-
-  Promise.all(roomIds.map(rid =>
-    fetch('/api/feed/' + encodeURIComponent(rid) + '?limit=200').then(r => r.json())
-  )).then(results => {
-    const allEvents = []
-    results.forEach(res => {
-      if (res.success && res.events) {
-        res.events.forEach(ev => allEvents.push(ev))
-      }
-    })
-    allEvents.sort((a, b) => a.timestamp - b.timestamp)
-    const merged = allEvents.slice(0, 200)
-    renderFeed(merged)
-  }).catch(() => {
-    container.innerHTML = '<div class="feed-empty" style="color:#fe2c55">加载失败</div>'
-  })
+  // 如果 SSE init 已经渲染了历史消息，仅滚动到底部
+  if (container.querySelector('.feed-item')) {
+    container.scrollTop = container.scrollHeight
+    return
+  }
+  // 容器为空 → 显示空状态（历史数据由 SSE init 事件提供）
+  container.innerHTML = '<div class="feed-empty"><div class="icon">🖥</div>暂无互动记录</div>'
 }
 
 function renderFeed(events) {
@@ -1191,11 +1213,11 @@ function renderFeed(events) {
       icon = '🚪'
       bodyHtml = `<span class="feed-name">${name}</span> 进入了直播间`
     } else if (ev.type === 'chat') {
-      const content = escapeHtml(ev.content || '')
+      const content = renderEmoji(escapeHtml(ev.content || ''))
       icon = '💬'
       bodyHtml = `<span class="feed-name">${name}</span><span class="feed-content">: ${content}</span>`
     } else {
-      const giftName = escapeHtml(ev.content || '?')
+      const giftName = renderEmoji(escapeHtml(ev.content || '?'))
       const cnt = ev.count || 1
       icon = '🎁'
       bodyHtml = `<span class="feed-name">${name}</span> 送了 <span class="feed-count">${cnt}个${giftName}</span>`
@@ -1229,10 +1251,10 @@ function appendFeedItem(event) {
     bodyHtml = `<span class="feed-name">${name}</span> 进入了直播间`
   } else if (event.type === 'mystery_chat') {
     typeClass = 'feed-chat'; icon = '💬'
-    bodyHtml = `<span class="feed-name">${name}</span><span class="feed-content">: ${escapeHtml(d.content || '')}</span>`
+    bodyHtml = `<span class="feed-name">${name}</span><span class="feed-content">: ${renderEmoji(escapeHtml(d.content || ''))}</span>`
   } else if (event.type === 'mystery_gift') {
     typeClass = 'feed-gift'; icon = '🎁'
-    const giftName = escapeHtml(d.gift_name || d.content || '?')
+    const giftName = renderEmoji(escapeHtml(d.gift_name || d.content || '?'))
     bodyHtml = `<span class="feed-name">${name}</span> 送了 <span class="feed-count">${d.count || 1}个${giftName}</span>`
   } else {
     return
@@ -1387,7 +1409,8 @@ function stopAll() {
   fetch('/api/stop_all', {method: 'POST'}).then(() => refreshRooms())
 }
 
-// 页面加载时：检测服务端是否已有监听中的房间，自动重连
+// 页面加载时：加载抖音表情映射 + 检测是否已有监听中的房间
+loadEmojiMap()
 ;(function autoReconnectOnLoad() {
   fetch('/api/status')
     .then(r => r.json())
