@@ -778,16 +778,15 @@ function renderHistory() {
       }
 
       const records = res.records
-      // 房间筛选
-      const roomFiltered = selectedRoomId ? records.filter(r => (r.last_room_id || r.room_id) === selectedRoomId) : records
-      if (roomFiltered.length === 0) {
+      // 历史页显示所有房间的所有记录，不做房间筛选
+      if (records.length === 0) {
         container.innerHTML = '<div class="empty"><div class="icon">📜</div>暂无历史记录</div>'
         return
       }
       // 渲染选择栏（精简版）
       let html = ''
 
-      roomFiltered.forEach(item => {
+      records.forEach(item => {
         const extra = item.extra || {}
         const uniqueId = extra.unique_id || item.unique_id || item.sec_uid?.slice(0, 12) || '?'
         const profileUrl = item.sec_uid ? 'https://www.douyin.com/user/' + encodeURIComponent(item.sec_uid) : null
