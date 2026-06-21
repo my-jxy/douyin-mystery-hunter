@@ -286,6 +286,85 @@ def _load_room_history(room_id):
         print(f"[DB] load error: {e}", flush=True)
         return []
 
+def _load_history_by_nickname(nickname):
+    """按直播间昵称查跨房间历史记录"""
+    try:
+        clean_name = nickname.replace(' ', '').lower()
+        conn = sqlite3.connect(_DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute('SELECT * FROM mystery_records WHERE is_regular = 0')
+        all_rows = [dict(r) for r in cur.fetchall()]
+
+        rows = []
+        for r in all_rows:
+            # 匹配 nickname 字段（line 184 存的 room_nickname）
+            db_nick = (r.get('nickname') or '').replace(' ', '').lower()
+            match1 = (clean_name in db_nick or db_nick in clean_name)
+            # 匹配 extra JSON 中的 room_nickname（line 113 存）
+            extra_str = r.get('extra') or '{}'
+            match2 = False
+            try:
+                extra = json.loads(extra_str) if isinstance(extra_str, str) else extra_str
+                extra_nick = (extra.get('room_nickname') or '').replace(' ', '').lower()
+                match2 = (clean_name in extra_nick or extra_nick in clean_name)
+            except:
+                pass
+            if match1 or match2:
+                rows.append(r)
+
+        print(f"[DEBUG] _load_history_by_nickname: name={nickname!r} clean={clean_name!r} total={len(all_rows)} matched={len(rows)}", flush=True)
+
+        if not rows:
+            conn.close()
+            return []
+
+        # 拉取 display_names（复用 _load_room_history 逻辑）
+        all_sec_uids = list(set(r['sec_uid'] for r in rows if r.get('sec_uid')))
+        placeholders = ','.join('?' * len(all_sec_uids)) if all_sec_uids else "'none'"
+        cur2 = conn.execute(f'''
+            SELECT sec_uid, display, last_seen, seen_count
+            FROM display_names
+            WHERE sec_uid IN ({placeholders})
+        ''', all_sec_uids if all_sec_uids else [])
+        dn_rows = cur2.fetchall()
+        conn.close()
+
+        # 按 sec_uid 分组，合并 display_names
+        display_map = {}
+        for d in dn_rows:
+            key = d['sec_uid']
+            if key not in display_map:
+                display_map[key] = []
+            display_map[key].append({'display': d['display'], 'last_seen': d['last_seen'], 'seen_count': d['seen_count']})
+
+        merged = {}
+        for row in rows:
+            key = row['sec_uid']
+            if key not in merged:
+                row['displays'] = sorted(display_map.get(key, []), key=lambda x: x['last_seen'], reverse=True)
+                if row.get('extra'):
+                    try:
+                        row['extra'] = json.loads(row['extra'])
+                    except:
+                        row['extra'] = {}
+                row['is_current'] = False
+                merged[key] = row
+            else:
+                existing = merged[key]
+                if (row.get('last_seen') or 0) > (existing.get('last_seen') or 0):
+                    existing['last_seen'] = row['last_seen']
+
+        result = list(merged.values())
+        for item in result:
+            ex = item.get('extra')
+            if isinstance(ex, dict) and ex.get('room_nickname'):
+                item['room_nickname'] = ex['room_nickname']
+        result.sort(key=lambda x: x.get('last_seen', 0) or 0, reverse=True)
+        return result
+    except Exception as e:
+        print(f"[DB] load_by_nickname error: {e}", flush=True)
+        return []
+
 def gender_str(g):
     return GENDER_MAP.get(g, '未知')
 
@@ -1172,6 +1251,71 @@ def history_all():
             item['displays'] = []
             item['is_current'] = False
     return jsonify({'success': True, 'records': history, 'count': len(history)})
+
+
+@app.route('/api/history_by_nickname')
+def history_by_nickname():
+    """按直播间昵称查跨房间历史记录"""
+    name = request.args.get('name', '').strip()
+    if not name:
+        return jsonify({'success': False, 'error': '缺少name参数'})
+
+    from datetime import datetime, timezone, timedelta
+    beijing_tz = timezone(timedelta(hours=8))
+    beijing_now = datetime.now(beijing_tz)
+    today_3am = beijing_now.replace(hour=3, minute=0, second=0, microsecond=0)
+    if beijing_now >= today_3am:
+        cutoff = today_3am
+    else:
+        cutoff = today_3am - timedelta(days=1)
+    cutoff_ts = int(cutoff.timestamp())
+    today_midnight = beijing_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    midnight_ts = int(today_midnight.timestamp())
+
+    history = _load_history_by_nickname(name)
+
+    # 标记马甲状态（复用 history_all 的逻辑）
+    for item in history:
+        displays = item.get('displays', []) or []
+        if not displays:
+            continue
+        mystery = [d for d in displays if d.get('display','').startswith('神秘人')]
+        dou = [d for d in displays if d.get('display','').startswith('dou')]
+        other = [d for d in displays if not d.get('display','').startswith('神秘人') and not d.get('display','').startswith('dou')]
+        new_displays = []
+        if mystery:
+            mystery.sort(key=lambda x: x.get('last_seen', 0))
+            latest_m = mystery[-1]
+            today_m = [d for d in mystery if d.get('last_seen', 0) >= cutoff_ts]
+            if today_m:
+                latest_m['is_current'] = True
+            else:
+                latest_m['is_current'] = False
+            new_displays.append(latest_m)
+        if dou:
+            dou.sort(key=lambda x: x.get('last_seen', 0))
+            today_d = [d for d in dou if d.get('last_seen', 0) >= midnight_ts]
+            latest_d = dou[-1]
+            if len(today_d) >= 2:
+                latest_d['is_current'] = True
+            else:
+                latest_d['is_current'] = False
+            new_displays.append(latest_d)
+        if new_displays:
+            new_displays.sort(key=lambda x: x.get('last_seen', 0))
+            item['displays'] = new_displays
+            item['is_current'] = any(d.get('is_current') for d in new_displays)
+            extra_nickname = (item.get('extra') or {}).get('nickname')
+            if extra_nickname and extra_nickname != item.get('real_name'):
+                item['real_name'] = extra_nickname
+            extra_rn = (item.get('extra') or {}).get('room_nickname')
+            if extra_rn:
+                item['room_nickname'] = extra_rn
+                item['nickname'] = extra_rn
+        else:
+            item['displays'] = []
+            item['is_current'] = False
+    return jsonify({'success': True, 'count': len(history), 'records': history})
 
 
 @app.route('/api/history_all_all')
