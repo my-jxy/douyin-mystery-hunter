@@ -768,18 +768,15 @@ function renderHistory() {
   const container = document.getElementById('events')
   container.innerHTML = '<div class="empty"><div class="icon">⏳</div>加载中...</div>'
 
-  // 直接拉取所有房间的历史记录，不分房间
-  fetch('/api/history_all_all')
+  // 有选中房间 → 调 history_all（用 seen_room_ids 准确筛选）
+  // 无选中房间 → 调 history_all_all（全部记录）
+  const url = selectedRoomId ? '/api/history_all?room_id=' + encodeURIComponent(selectedRoomId) : '/api/history_all_all'
+
+  fetch(url)
     .then(r => r.json())
     .then(res => {
-      if (!res.success || !res.records || res.records.length === 0) {
-        container.innerHTML = '<div class="empty"><div class="icon">📜</div>暂无历史记录</div>'
-        return
-      }
-
-      const records = res.records
-      // 历史页显示所有房间的所有记录，不做房间筛选
-      if (records.length === 0) {
+      const records = res.records || (res.success && res.records ? res.records : null)
+      if (!res.success || !records || records.length === 0) {
         container.innerHTML = '<div class="empty"><div class="icon">📜</div>暂无历史记录</div>'
         return
       }
