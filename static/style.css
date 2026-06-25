@@ -210,6 +210,14 @@ h1{font-size:26px;text-align:center;padding:12px 0 8px;background:linear-gradien
 .feed-item.feed-enter .feed-icon { color: #5ac8fa; }
 .feed-item.feed-enter .feed-name { color: #5ac8fa; }
 .feed-item.feed-enter { background: rgba(90,200,250,0.03); }
+/* 进入消息自动消失动画 */
+.feed-enter-auto {
+    animation: feedFadeOut 2.3s ease forwards;
+}
+@keyframes feedFadeOut {
+    0%, 85% { opacity: 1; max-height: 60px; }
+    100% { opacity: 0; max-height: 0; padding: 0; margin: 0; overflow: hidden; }
+}
 /* 发言事件 */
 .feed-item.feed-chat .feed-icon { color: #34c759; }
 .feed-item.feed-chat .feed-name { color: #34c759; }

@@ -1233,6 +1233,8 @@ function renderFeed(events) {
       let appended = 0
       for (const ev of events) {
         if (ev.timestamp > lastTs) {
+          // 跳过 enter 事件（重连补漏也不需要历史进入消息）
+          if (ev.type === 'enter') continue
           const timeStr = formatTime(ev.timestamp)
           const name = escapeHtml(ev.real_name || ev.display || '?')
           const typeClass = ev.type === 'enter' ? 'feed-enter' : ev.type === 'chat' ? 'feed-chat' : 'feed-gift'
@@ -1277,6 +1279,8 @@ function renderFeed(events) {
   // 容器为空 → 首次加载完全渲染
   let html = ''
   events.forEach(ev => {
+    // 跳过 enter 事件（进入消息只在实时显示中自动消失，历史渲染不需要）
+    if (ev.type === 'enter') return
     const timeStr = formatTime(ev.timestamp)
     const name = escapeHtml(ev.real_name || ev.display || '?')
     const typeClass = ev.type === 'enter' ? 'feed-enter' : ev.type === 'chat' ? 'feed-chat' : 'feed-gift'
@@ -1337,13 +1341,26 @@ function appendFeedItem(event) {
     container.innerHTML = ''
   }
 
+  const isEnter = event.type === 'mystery_enter'
+
   // 直接 insertAdjacentHTML，不做 DOM 创建
   container.insertAdjacentHTML('beforeend',
-    `<div class="feed-item ${typeClass}">` +
+    `<div class="feed-item ${typeClass}${isEnter ? ' feed-enter-auto' : ''}">` +
     `<span class="feed-icon">${icon}</span>` +
     `<div class="feed-body">${bodyHtml}</div>` +
     `<span class="feed-time">${timeStr}</span></div>`
   )
+
+  // 进入消息 2 秒后用 CSS animation 淡出，动画完成后移除 DOM
+  if (isEnter) {
+    const el = container.lastElementChild
+    if (el) {
+      el.addEventListener('animationend', function handler() {
+        el.removeEventListener('animationend', handler)
+        if (el.parentNode) el.remove()
+      })
+    }
+  }
 
   // 超过 500 条时丢弃最早的
   while (container.children.length > 500) {
